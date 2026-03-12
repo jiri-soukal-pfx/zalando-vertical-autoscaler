@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -45,26 +46,31 @@ jobs:
           echo "Next version: ${NEXT} (previous: ${LATEST:-none})"
 
       - name: Generate release notes with Claude
-        id: notes
-        uses: anthropics/claude-code-action@v1
-        with:
-          prompt: |
-            Generate concise release notes for version ${{ steps.version.outputs.version }}.
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          PREVIOUS="${{ steps.version.outputs.previous }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ "$PREVIOUS" = "none" ]; then
+            GIT_LOG=$(git log --pretty=format:'%s (%an)' HEAD)
+          else
+            GIT_LOG=$(git log --pretty=format:'%s (%an)' "${PREVIOUS}..HEAD")
+          fi
+          claude -p "Generate concise release notes for version ${VERSION}.
 
-            Look at the git log between ${{ steps.version.outputs.previous }} and HEAD.
-            If there is no previous tag, summarize all commits.
+          Here are the commits since the last release:
+          ${GIT_LOG}
 
-            Format the output as markdown with these sections (skip empty sections):
-            ## What's Changed
-            - Bullet points of meaningful changes grouped by category (Features, Fixes, Chores)
+          Format the output as markdown with these sections (skip empty sections):
+          ## What's Changed
+          - Bullet points of meaningful changes grouped by category (Features, Fixes, Chores)
 
-            ## Contributors
-            - List contributors from the commits
+          ## Contributors
+          - List contributors from the commits
 
-            Keep it brief and user-facing. Do not include commit hashes.
-            Output ONLY the markdown, no preamble.
-          allowed_tools: "Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          Keep it brief and user-facing. Do not include commit hashes.
+          Output ONLY the markdown, no preamble." --output-format text > /tmp/release-notes.md
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -98,9 +104,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat <<'EOF' > /tmp/release-notes.md
-          ${{ steps.notes.outputs.result }}
-          EOF
           gh release create "${{ steps.version.outputs.version }}" \
             --title "${{ steps.version.outputs.version }}" \
             --notes-file /tmp/release-notes.md
