@@ -1,0 +1,3 @@
+{{- if .Values.installCRD }}
+{{ .Files.Get "../../config/crd/postgresmemorpolicies.yaml" }}
+{{- end }}

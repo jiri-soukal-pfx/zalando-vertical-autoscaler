@@ -1,0 +1,272 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+  name: postgresmemorypolicies.pricefx.io
+spec:
+  group: pricefx.io
+  names:
+    categories:
+    - all
+    kind: PostgresMemoryPolicy
+    listKind: PostgresMemoryPolicyList
+    plural: postgresmemorypolicies
+    singular: postgresmemorypolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.targetCluster
+      name: Target
+      type: string
+    - jsonPath: .spec.vpaName
+      name: VPA
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PostgresMemoryPolicy is the Schema for the postgresmemorypolicies
+          API.
+        properties:
+          apiVersion:
+            description: APIVersion defines the versioned schema of this representation
+              of an object.
+            type: string
+          kind:
+            description: Kind is a string value representing the REST resource this
+              object represents.
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PostgresMemoryPolicySpec defines the desired state of PostgresMemoryPolicy.
+            properties:
+              maintenanceWindow:
+                description: MaintenanceWindow defines when maintenance may be performed.
+                properties:
+                  cron:
+                    description: Cron is a standard 5-field cron expression defining
+                      the start of the maintenance window.
+                    type: string
+                  timeoutMinutes:
+                    default: 60
+                    description: TimeoutMinutes is the maximum duration of the maintenance
+                      window in minutes.
+                    type: integer
+                required:
+                - cron
+                type: object
+              memoryMax:
+                anyOf:
+                - type: integer
+                - type: string
+                description: MemoryMax is the upper bound for memory requests.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              memoryMin:
+                anyOf:
+                - type: integer
+                - type: string
+                description: MemoryMin is the lower bound for memory requests.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              overcommit:
+                default: 1
+                description: Overcommit sets limits = requests * overcommit.
+                minimum: 1
+                type: number
+              postActions:
+                description: PostActions are executed in order after a successful
+                  PG cluster update.
+                items:
+                  description: PostActionSpec defines a single action to execute after
+                    a successful maintenance run.
+                  properties:
+                    action:
+                      description: Action to perform on the target resource.
+                      enum:
+                      - RolloutRestart
+                      type: string
+                    target:
+                      description: Target resource to act upon.
+                      properties:
+                        kind:
+                          description: Kind of the target resource.
+                          enum:
+                          - Deployment
+                          - StatefulSet
+                          - DaemonSet
+                          type: string
+                        name:
+                          description: Name of the target resource.
+                          type: string
+                        namespace:
+                          description: Namespace of the target resource. Defaults
+                            to the same namespace as the PostgresMemoryPolicy CR if
+                            omitted.
+                          type: string
+                      required:
+                      - kind
+                      - name
+                      type: object
+                  required:
+                  - action
+                  - target
+                  type: object
+                type: array
+              safetyGates:
+                description: SafetyGates are evaluated before starting maintenance.
+                properties:
+                  minReadyReplicas:
+                    default: 1
+                    description: MinReadyReplicas is the minimum number of ready replicas
+                      required before proceeding.
+                    format: int32
+                    type: integer
+                  requireHealthyCluster:
+                    default: true
+                    description: RequireHealthyCluster aborts maintenance if the Zalando
+                      cluster is not healthy.
+                    type: boolean
+                type: object
+              targetCluster:
+                description: TargetCluster is the name of the Zalando postgresql CR
+                  in the same namespace.
+                type: string
+              vpaContainerName:
+                default: postgres
+                description: VPAContainerName is the container name to read VPA recommendations
+                  from.
+                type: string
+              vpaName:
+                description: VPAName is the name of the VPA object that holds memory
+                  recommendations.
+                type: string
+            required:
+            - maintenanceWindow
+            - memoryMax
+            - memoryMin
+            - targetCluster
+            - vpaName
+            type: object
+          status:
+            description: PostgresMemoryPolicyStatus defines the observed state of
+              PostgresMemoryPolicy.
+            properties:
+              conditions:
+                description: Conditions holds standard Kubernetes condition types.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition
+                        transitioned from one status to another.
+                      format: date-time
+                      type: string
+                    message:
+                      description: message is a human readable message indicating
+                        details about the transition.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation
+                        that the condition was set based upon.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: reason contains a programmatic identifier indicating
+                        the reason for the condition's last transition.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              currentMemory:
+                anyOf:
+                - type: integer
+                - type: string
+                description: CurrentMemory is the currently applied memory request
+                  in the Zalando CR.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+              maintenanceHistory:
+                description: MaintenanceHistory holds the last 10 maintenance run
+                  records.
+                items:
+                  description: MaintenanceRecord records the outcome of a single maintenance
+                    run.
+                  properties:
+                    appliedMemory:
+                      description: AppliedMemory is the memory value applied during
+                        this run.
+                      type: string
+                    completedAt:
+                      description: CompletedAt is the time the maintenance run completed
+                        (or failed).
+                      format: date-time
+                      type: string
+                    previousMemory:
+                      description: PreviousMemory is the memory value before this
+                        maintenance run.
+                      type: string
+                    reason:
+                      description: Reason provides a human-readable explanation for
+                        the status.
+                      type: string
+                    startedAt:
+                      description: StartedAt is the time the maintenance run started.
+                      format: date-time
+                      type: string
+                    status:
+                      description: Status is the terminal or intermediate status of
+                        the run.
+                      enum:
+                      - Pending
+                      - InProgress
+                      - Completed
+                      - Failed
+                      - Skipped
+                      type: string
+                  required:
+                  - startedAt
+                  - status
+                  type: object
+                type: array
+              memoryTarget:
+                anyOf:
+                - type: integer
+                - type: string
+                description: MemoryTarget is the VPA recommendation clamped to min/max.
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
