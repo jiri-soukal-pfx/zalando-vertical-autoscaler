@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'api/**'
+      - 'internal/**'
+      - 'charts/**'
+      - 'config/crd/**'
+      - 'Dockerfile'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/release.yml'
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          # Get the latest semver tag, default to v0.0.0 if none exists.
+          LATEST=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            NEXT="v0.1.0"
+          else
+            # Bump patch version.
+            MAJOR=$(echo "$LATEST" | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | cut -d. -f3)
+            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "previous=${LATEST:-none}" >> "$GITHUB_OUTPUT"
+          echo "Next version: ${NEXT} (previous: ${LATEST:-none})"
+
+      - name: Generate release notes with Claude
+        id: notes
+        uses: anthropics/claude-code-action@v1
+        with:
+          prompt: |
+            Generate concise release notes for version ${{ steps.version.outputs.version }}.
+
+            Look at the git log between ${{ steps.version.outputs.previous }} and HEAD.
+            If there is no previous tag, summarize all commits.
+
+            Format the output as markdown with these sections (skip empty sections):
+            ## What's Changed
+            - Bullet points of meaningful changes grouped by category (Features, Fixes, Chores)
+
+            ## Contributors
+            - List contributors from the commits
+
+            Keep it brief and user-facing. Do not include commit hashes.
+            Output ONLY the markdown, no preamble.
+          allowed_tools: "Bash(git log:*),Bash(git diff:*),Bash(git show:*)"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat <<'EOF' > /tmp/release-notes.md
+          ${{ steps.notes.outputs.result }}
+          EOF
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --notes-file /tmp/release-notes.md
