@@ -7,7 +7,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	vpav1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 
-	policyv1alpha1 "github.com/pricefx/postgres-memory-operator/api/v1alpha1"
+	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
 )
 
 func TestClampQuantity(t *testing.T) {

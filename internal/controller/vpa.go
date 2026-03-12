@@ -10,7 +10,7 @@ import (
 	vpav1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	policyv1alpha1 "github.com/pricefx/postgres-memory-operator/api/v1alpha1"
+	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
 )
 
 // VPARecommendation holds the memory and CPU target read from a VPA object.

@@ -1,9 +1,9 @@
-# Default values for postgres-memory-operator.
+# Default values for zalando-vertical-autoscaler.
 
 replicaCount: 1
 
 image:
-  repository: ghcr.io/pricefx/postgres-memory-operator
+  repository: ghcr.io/pricefx/zalando-vertical-autoscaler
   pullPolicy: IfNotPresent
   tag: ""
 
@@ -37,7 +37,6 @@ securityContext:
 
 resources:
   limits:
-    cpu: 500m
     memory: 128Mi
   requests:
     cpu: 10m

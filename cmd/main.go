@@ -1,4 +1,4 @@
-// Package main is the entry point for the postgres-memory-operator.
+// Package main is the entry point for the zalando-vertical-autoscaler.
 package main
 
 import (
@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	policyv1alpha1 "github.com/pricefx/postgres-memory-operator/api/v1alpha1"
-	"github.com/pricefx/postgres-memory-operator/internal/controller"
+	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
+	"github.com/pricefx/zalando-vertical-autoscaler/internal/controller"
 )
 
 var (
@@ -51,7 +51,7 @@ func main() {
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         leaderElect,
-		LeaderElectionID:       "postgres-memory-operator.pricefx.io",
+		LeaderElectionID:       "zalando-vertical-autoscaler.pricefx.io",
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -61,7 +61,7 @@ func main() {
 	reconciler := controller.NewPostgresMemoryPolicyReconciler(
 		mgr.GetClient(),
 		mgr.GetScheme(),
-		mgr.GetEventRecorderFor("postgres-memory-operator"),
+		mgr.GetEventRecorderFor("zalando-vertical-autoscaler"),
 	)
 	if err = reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PostgresMemoryPolicy")

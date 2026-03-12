@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	policyv1alpha1 "github.com/pricefx/postgres-memory-operator/api/v1alpha1"
+	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
 )
 
 const (

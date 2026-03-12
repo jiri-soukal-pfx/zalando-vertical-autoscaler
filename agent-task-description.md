@@ -8,7 +8,7 @@ You are an autonomous software engineering agent. Your goal is to implement a pr
 
 ## Operator Overview
 
-Implement a Kubernetes operator called **`postgres-memory-operator`** that:
+Implement a Kubernetes operator called **`zalando-vertical-autoscaler`** that:
 
 - Watches a custom resource `PostgresMemoryPolicy`
 - Reads memory (and CPU) recommendations from VPA `.status.recommendation`
@@ -26,7 +26,7 @@ Implement a Kubernetes operator called **`postgres-memory-operator`** that:
 - **Zalando CRD**: Use dynamic client or generate typed client from Zalando's CRD schema for `postgresql.acid.zalan.do/v1`
 - **VPA types**: Import or vendor from `k8s.io/autoscaler/vertical-pod-autoscaler`
 - **Build**: `Dockerfile` using `gcr.io/distroless/static` as final image
-- **Manifests**: Helm chart under `charts/postgres-memory-operator`
+- **Manifests**: Helm chart under `charts/zalando-vertical-autoscaler`
 
 ---
 
@@ -288,7 +288,7 @@ The operator ServiceAccount needs:
 ## Project Structure
 
 ```
-postgres-memory-operator/
+zalando-vertical-autoscaler/
 ├── cmd/
 │   └── main.go                        # manager setup, scheme registration
 ├── api/
@@ -308,7 +308,7 @@ postgres-memory-operator/
 │   └── crd/
 │       └── postgresmemorpolicies.yaml          # CRD manifest
 ├── charts/
-│   └── postgres-memory-operator/
+│   └── zalando-vertical-autoscaler/
 │       ├── Chart.yaml
 │       ├── values.yaml
 │       └── templates/
@@ -356,8 +356,8 @@ Use `sigs.k8s.io/controller-runtime/pkg/envtest` to write at least these integra
 ### 4. Manifest Validation
 ```bash
 kubectl apply --dry-run=server -f config/crd/postgresmemorpolicies.yaml
-helm lint charts/postgres-memory-operator
-helm template charts/postgres-memory-operator | kubectl apply --dry-run=client -f -
+helm lint charts/zalando-vertical-autoscaler
+helm template charts/zalando-vertical-autoscaler | kubectl apply --dry-run=client -f -
 ```
 
 ---

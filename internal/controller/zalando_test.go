@@ -5,7 +5,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	policyv1alpha1 "github.com/pricefx/postgres-memory-operator/api/v1alpha1"
+	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
 )
 
 func TestEvaluateChangeGates(t *testing.T) {

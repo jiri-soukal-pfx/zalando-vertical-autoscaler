@@ -3,7 +3,7 @@ package controller
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	policyv1alpha1 "github.com/pricefx/postgres-memory-operator/api/v1alpha1"
+	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
 )
 
 // SetCondition sets or updates a condition on the policy's status. It returns true

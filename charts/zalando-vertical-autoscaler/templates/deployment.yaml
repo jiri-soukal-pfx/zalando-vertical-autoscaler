@@ -1,15 +1,15 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "postgres-memory-operator.fullname" . }}
+  name: {{ include "zalando-vertical-autoscaler.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "postgres-memory-operator.labels" . | nindent 4 }}
+    {{- include "zalando-vertical-autoscaler.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "postgres-memory-operator.selectorLabels" . | nindent 6 }}
+      {{- include "zalando-vertical-autoscaler.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- with .Values.podAnnotations }}
@@ -17,7 +17,7 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "postgres-memory-operator.labels" . | nindent 8 }}
+        {{- include "zalando-vertical-autoscaler.labels" . | nindent 8 }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -26,7 +26,7 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      serviceAccountName: {{ include "postgres-memory-operator.serviceAccountName" . }}
+      serviceAccountName: {{ include "zalando-vertical-autoscaler.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
