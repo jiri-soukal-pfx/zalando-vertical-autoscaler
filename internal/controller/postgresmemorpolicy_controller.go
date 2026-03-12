@@ -118,20 +118,25 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 		return ctrl.Result{}, fmt.Errorf("evaluating maintenance window: %w", err)
 	}
 
-	if !windowResult.InWindow {
-		logger.V(1).Info("outside maintenance window", "nextOpen", windowResult.NextOpen)
-		requeueAfter := RequeueAfter(windowResult, now)
-		return ctrl.Result{RequeueAfter: requeueAfter}, nil
-	}
-
 	// Step 3: Check if maintenance is already in progress.
 	if IsConditionTrue(policy, policyv1alpha1.ConditionMaintenanceInProgress) {
 		inProgressRec := findInProgressRecord(policy)
 		if inProgressRec != nil {
+			if !windowResult.InWindow {
+				// Window expired while maintenance was still in progress — fail it.
+				logger.Info("maintenance window expired while maintenance in progress")
+				return r.failMaintenance(ctx, policy, policyv1alpha1.ReasonMaintenanceTimeout)
+			}
 			// Continue monitoring.
 			logger.Info("maintenance already in progress, monitoring")
 			return r.monitorMaintenance(ctx, policy, windowResult, now)
 		}
+	}
+
+	if !windowResult.InWindow {
+		logger.V(1).Info("outside maintenance window", "nextOpen", windowResult.NextOpen)
+		requeueAfter := RequeueAfter(windowResult, now)
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 
 	// Step 4: Safety gates.
