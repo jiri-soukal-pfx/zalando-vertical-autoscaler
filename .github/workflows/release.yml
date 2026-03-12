@@ -45,33 +45,6 @@ jobs:
           echo "previous=${LATEST:-none}" >> "$GITHUB_OUTPUT"
           echo "Next version: ${NEXT} (previous: ${LATEST:-none})"
 
-      - name: Generate release notes with Claude
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          npm install -g @anthropic-ai/claude-code
-          PREVIOUS="${{ steps.version.outputs.previous }}"
-          VERSION="${{ steps.version.outputs.version }}"
-          if [ "$PREVIOUS" = "none" ]; then
-            GIT_LOG=$(git log --pretty=format:'%s (%an)' HEAD)
-          else
-            GIT_LOG=$(git log --pretty=format:'%s (%an)' "${PREVIOUS}..HEAD")
-          fi
-          claude -p "Generate concise release notes for version ${VERSION}.
-
-          Here are the commits since the last release:
-          ${GIT_LOG}
-
-          Format the output as markdown with these sections (skip empty sections):
-          ## What's Changed
-          - Bullet points of meaningful changes grouped by category (Features, Fixes, Chores)
-
-          ## Contributors
-          - List contributors from the commits
-
-          Keep it brief and user-facing. Do not include commit hashes.
-          Output ONLY the markdown, no preamble." --output-format text > /tmp/release-notes.md
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -106,4 +79,4 @@ jobs:
         run: |
           gh release create "${{ steps.version.outputs.version }}" \
             --title "${{ steps.version.outputs.version }}" \
-            --notes-file /tmp/release-notes.md
+            --generate-notes
