@@ -1,0 +1,61 @@
+# Default values for zalando-vertical-autoscaler.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/pricefx/zalando-vertical-autoscaler
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use. Auto-generated if not set.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+
+resources:
+  limits:
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+
+# Node selector for pod assignment
+nodeSelector: {}
+
+# Tolerations for pod assignment
+tolerations: []
+
+# Affinity rules for pod assignment
+affinity: {}
+
+# Leader election: set to true for HA deployments with multiple replicas
+leaderElect: false
+
+# Log level: debug, info, error
+logLevel: info
+
+# Whether to install the CRD
+installCRD: true

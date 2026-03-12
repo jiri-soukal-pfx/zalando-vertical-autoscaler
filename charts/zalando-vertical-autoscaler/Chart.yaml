@@ -1,0 +1,14 @@
+apiVersion: v2
+name: zalando-vertical-autoscaler
+description: A Kubernetes operator that applies VPA memory recommendations to Zalando PostgreSQL clusters during maintenance windows.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - postgresql
+  - kubernetes
+  - operator
+  - vpa
+  - autoscaling
+maintainers:
+  - name: Pricefx Platform Team
