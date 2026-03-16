@@ -20,7 +20,7 @@ Implement a Kubernetes operator called **`zalando-vertical-autoscaler`** that:
 
 ## Technology Stack
 
-- **Language**: Go 1.22+
+- **Language**: Go 1.24
 - **Framework**: [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime) (kubebuilder patterns)
 - **CRD scaffolding**: Use `kubebuilder` CLI conventions but implement manually — do not rely on kubebuilder binary being present
 - **Zalando CRD**: Use dynamic client or generate typed client from Zalando's CRD schema for `postgresql.acid.zalan.do/v1`
@@ -197,7 +197,7 @@ When patching the Zalando `postgresql` CR:
 - Set `spec.resources.requests.memory` = `memoryTarget`
 - Set `spec.resources.limits.memory` = `memoryTarget * overcommit`
 - CPU: read CPU recommendation from VPA (same container), apply same overcommit logic
-- Use **strategic merge patch** or **server-side apply**
+- Use **merge patch** (`application/merge-patch+json`)
 - Do NOT overwrite any other fields in the Zalando CR
 
 ### VPA Recommendation Reading
@@ -261,8 +261,9 @@ To add a new action type (e.g. `ScaleDown`, `ExecJob`):
 ## Cron Window Evaluation
 
 - Use [robfig/cron](https://github.com/robfig/cron) v3 for cron parsing
-- A maintenance window is **open** if: `now >= nextScheduledTime && now < nextScheduledTime + timeoutMinutes`
-- Requeue duration when outside window = `nextScheduledTime - now + 5s jitter`
+- A maintenance window is **open** if: `now >= prevFire && now < prevFire + timeoutMinutes`
+  - `robfig/cron` v3 only provides `Next()`; compute `prevFire` by walking forward from `now - 366d`
+- Requeue duration when outside window = `nextFire - now + 5s jitter`
 
 ---
 
@@ -277,8 +278,10 @@ The operator ServiceAccount needs:
 - verticalpodautoscalers: get, list, watch
 # Read/patch Zalando CR
 - postgresqls.acid.zalan.do: get, list, watch, patch, update
-# Read/patch/watch Deployments
+# Read/patch/watch workloads
 - deployments: get, list, watch, patch, update
+- statefulsets: get, list, watch, patch, update
+- daemonsets: get, list, watch, patch, update
 # Emit events
 - events: create, patch
 ```
@@ -422,13 +425,12 @@ If any step fails, **debug and fix before proceeding to the next step**. Do not 
 ## Key Dependencies (go.mod)
 
 ```
-sigs.k8s.io/controller-runtime v0.18+
-k8s.io/client-go v0.29+
-k8s.io/apimachinery v0.29+
-k8s.io/api v0.29+
+sigs.k8s.io/controller-runtime v0.19.3
+k8s.io/client-go v0.31.3
+k8s.io/apimachinery v0.31.3
+k8s.io/api v0.31.3
 github.com/robfig/cron/v3 v3.0.1
-k8s.io/autoscaler/vertical-pod-autoscaler (for VPA types)
-acid.zalan.do/postgres-operator (for Zalando types, or use dynamic client)
+k8s.io/autoscaler/vertical-pod-autoscaler v1.0.0
 ```
 
 > If Zalando Go types are difficult to vendor, use `dynamic client` + `unstructured` to patch the `postgresql` CR — this is acceptable and avoids dependency issues.
