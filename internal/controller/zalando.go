@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -83,9 +84,13 @@ func EvaluateChangeGates(current, target resource.Quantity) ChangeGateResult {
 }
 
 // GetCurrentMemory reads the current memory request from the Zalando postgresql CR.
+// Returns (nil, nil) if the CR does not exist or has no memory set.
 func (p *ZalandoPatcher) GetCurrentMemory(ctx context.Context, namespace, name string) (*resource.Quantity, error) {
 	pg, err := p.getPostgresql(ctx, namespace, name)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
