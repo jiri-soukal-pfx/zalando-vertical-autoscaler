@@ -17,17 +17,23 @@ Zalando's Postgres operator does not natively integrate with the Kubernetes Vert
 ```
 VPA recommendation ──> clamp to [memoryMin, memoryMax]
                             │
-                      maintenance window open?
-                       no /          \ yes
-                      wait        safety gates pass?
-                                   no /       \ yes
-                                  skip    patch Zalando CR
-                                              │
-                                        wait for cluster Running
-                                              │
-                                        execute post-actions
-                                              │
-                                           done ✓
+                      Zalando CR has no memory?
+                       no /          \ yes (and initialMemory set)
+                      │          apply initialMemory immediately
+                      │                    │
+                      │               requeue (1m)
+                      │
+                 maintenance window open?
+                  no /          \ yes
+                 wait        safety gates pass?
+                              no /       \ yes
+                             skip    patch Zalando CR
+                                         │
+                                   wait for cluster Running
+                                         │
+                                   execute post-actions
+                                         │
+                                      done ✓
 ```
 
 ## Quick start
@@ -132,6 +138,7 @@ The last 10 runs are recorded in `.status.maintenanceHistory` with status, timin
 | `spec.memoryMin` | *required* | Lower bound for memory |
 | `spec.memoryMax` | *required* | Upper bound for memory |
 | `spec.overcommit` | `1` | Memory limit multiplier (`limits = requests * overcommit`) |
+| `spec.initialMemory` | - | Memory to apply when the Zalando CR has no resources set (bootstrap) |
 | `spec.maintenanceWindow.cron` | *required* | 5-field cron expression (UTC) |
 | `spec.maintenanceWindow.timeoutMinutes` | `60` | How long the window stays open |
 | `spec.safetyGates.requireHealthyCluster` | `true` | Require cluster status `Running` |

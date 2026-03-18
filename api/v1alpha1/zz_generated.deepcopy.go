@@ -123,6 +123,10 @@ func (in *PostgresMemoryPolicySpec) DeepCopyInto(out *PostgresMemoryPolicySpec) 
 	*out = *in
 	out.MemoryMin = in.MemoryMin.DeepCopy()
 	out.MemoryMax = in.MemoryMax.DeepCopy()
+	if in.InitialMemory != nil {
+		x := in.InitialMemory.DeepCopy()
+		out.InitialMemory = &x
+	}
 	out.MaintenanceWindow = in.MaintenanceWindow
 	out.SafetyGates = in.SafetyGates
 	if in.PostActions != nil {

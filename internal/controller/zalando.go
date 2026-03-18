@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -83,9 +84,13 @@ func EvaluateChangeGates(current, target resource.Quantity) ChangeGateResult {
 }
 
 // GetCurrentMemory reads the current memory request from the Zalando postgresql CR.
+// Returns (nil, nil) if the CR does not exist or has no memory set.
 func (p *ZalandoPatcher) GetCurrentMemory(ctx context.Context, namespace, name string) (*resource.Quantity, error) {
 	pg, err := p.getPostgresql(ctx, namespace, name)
 	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
@@ -110,9 +115,7 @@ func (p *ZalandoPatcher) PatchResources(ctx context.Context, policy *policyv1alp
 	patchData := buildMemoryPatch(memRequest.String(), memLimit.String())
 
 	if rec.CPU != nil {
-		cpuLimitMillis := int64(float64(rec.CPU.MilliValue()) * overcommit)
-		cpuLimit := resource.NewMilliQuantity(cpuLimitMillis, resource.DecimalSI)
-		patchData = buildMemoryCPUPatch(memRequest.String(), memLimit.String(), rec.CPU.String(), cpuLimit.String())
+		patchData = buildMemoryCPUPatch(memRequest.String(), memLimit.String(), rec.CPU.String())
 	}
 
 	raw, err := json.Marshal(patchData)
@@ -199,7 +202,8 @@ func buildMemoryPatch(memRequest, memLimit string) map[string]interface{} {
 }
 
 // buildMemoryCPUPatch constructs a merge-patch map for memory and CPU resources.
-func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest, cpuLimit string) map[string]interface{} {
+// Only CPU requests are set — CPU limits are never applied (see "No CPU limits" policy).
+func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest string) map[string]interface{} {
 	return map[string]interface{}{
 		"spec": map[string]interface{}{
 			"resources": map[string]interface{}{
@@ -209,7 +213,6 @@ func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest, cpuLimit string) map[
 				},
 				"limits": map[string]interface{}{
 					"memory": memLimit,
-					"cpu":    cpuLimit,
 				},
 			},
 		},
