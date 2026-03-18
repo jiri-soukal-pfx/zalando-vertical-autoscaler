@@ -74,6 +74,13 @@ spec:
                 description: MemoryMin is the lower bound for memory requests.
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
+              initialMemory:
+                anyOf:
+                - type: integer
+                - type: string
+                description: "InitialMemory is the memory value applied to the Zalando CR when it has no spec.resources.requests.memory set. This bootstraps new clusters before VPA has produced a recommendation. Applied immediately, bypassing the maintenance window and change gates."
+                pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                x-kubernetes-int-or-string: true
               overcommit:
                 default: 1
                 description: Overcommit sets limits = requests * overcommit.

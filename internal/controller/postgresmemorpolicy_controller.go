@@ -107,6 +107,41 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 	memTarget := rec.Memory
 	policy.Status.MemoryTarget = &memTarget
 
+	// Step 1.5: Bootstrap — if the Zalando CR has no memory set and InitialMemory
+	// is configured, apply initial resources immediately (no window check, no change gates).
+	currentMemory, err := r.zalandoPatcher.GetCurrentMemory(ctx, policy.Namespace, policy.Spec.TargetCluster)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("reading current memory for bootstrap check: %w", err)
+	}
+
+	if currentMemory == nil && policy.Spec.InitialMemory != nil {
+		logger.Info("Zalando CR has no memory set, applying initialMemory", "initialMemory", policy.Spec.InitialMemory.String())
+
+		initialMemory := policy.Spec.InitialMemory.DeepCopy()
+		memBytes := initialMemory.Value()
+		cpuMillis := int64(float64(memBytes) / (1024 * 1024 * 1024) * 100)
+		if cpuMillis < 100 {
+			cpuMillis = 100 // minimum 100m
+		}
+		cpuQuantity := resource.NewMilliQuantity(cpuMillis, resource.DecimalSI)
+
+		initialRec := &VPARecommendation{
+			Memory: initialMemory,
+			CPU:    cpuQuantity,
+		}
+
+		if err := r.zalandoPatcher.PatchResources(ctx, policy, initialRec); err != nil {
+			return ctrl.Result{}, fmt.Errorf("applying initial memory: %w", err)
+		}
+
+		policy.Status.CurrentMemory = &initialMemory
+		r.Recorder.Eventf(policy, "Normal", "InitialMemoryApplied",
+			"applied initial memory=%s cpu=%s to cluster %q (no prior resources set)",
+			initialMemory.String(), cpuQuantity.String(), policy.Spec.TargetCluster)
+
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+	}
+
 	// Step 2: Evaluate maintenance window.
 	now := time.Now()
 	windowResult, err := r.windowEvaluator.Evaluate(
@@ -159,11 +194,7 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 		}
 	}
 
-	// Step 5: Change gates.
-	currentMemory, err := r.zalandoPatcher.GetCurrentMemory(ctx, policy.Namespace, policy.Spec.TargetCluster)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("reading current memory: %w", err)
-	}
+	// Step 5: Change gates (reuse currentMemory from bootstrap check above).
 	if currentMemory != nil {
 		policy.Status.CurrentMemory = currentMemory
 		gateResult := EvaluateChangeGates(*currentMemory, memTarget)
