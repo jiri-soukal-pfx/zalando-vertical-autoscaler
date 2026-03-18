@@ -36,7 +36,7 @@ VPA recommendation ──> clamp to [memoryMin, memoryMax]
 
 ```bash
 helm upgrade --install zalando-vpa \
-  oci://ghcr.io/jiri-soukal-pfx/zalando-vertical-autoscaler/chart \
+  oci://ghcr.io/jiri-soukal-pfx/zalando-vertical-autoscaler/chart/zalando-vertical-autoscaler \
   --namespace operators --create-namespace
 ```
 

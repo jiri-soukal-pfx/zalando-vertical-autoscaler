@@ -73,6 +73,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Package and push Helm chart
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Update Chart.yaml with the release version.
+          sed -i "s/^version:.*/version: ${VERSION#v}/" charts/zalando-vertical-autoscaler/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" charts/zalando-vertical-autoscaler/Chart.yaml
+          helm package charts/zalando-vertical-autoscaler --version "${VERSION#v}" --app-version "${VERSION}"
+          helm push "zalando-vertical-autoscaler-${VERSION#v}.tgz" oci://ghcr.io/${{ github.repository }}/chart
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

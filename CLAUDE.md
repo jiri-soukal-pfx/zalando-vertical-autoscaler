@@ -97,13 +97,6 @@ forward from `now - 366d` to find the most recent fire.
 
 ## Development workflow
 
-### Before first build — generate go.sum
-The `go.sum` in the repo is stale after the dependency version bump to
-k8s v0.31.x / controller-runtime v0.19.x. Always run this first:
-```bash
-go mod tidy
-```
-
 ### Build & vet
 ```bash
 go build ./...
@@ -130,22 +123,6 @@ helm template charts/zalando-vertical-autoscaler | kubectl apply --dry-run=clien
 
 ---
 
-## Known issues / pending work
-
-1. **Dockerfile still uses `golang:1.22-alpine`** — should be bumped to `golang:1.24-alpine`
-   to match `go.mod`.
-
-2. **Integration tests not yet run against a real cluster** — `go mod tidy` must
-   be run first; after that run the envtest suite locally to confirm all 9
-   scenarios pass.
-
-3. **`go.sum` is stale** — regenerate with `go mod tidy` before any build.
-
-4. **envtest integration tests not yet verified** — written but not executed;
-   may need small fixes after `go mod tidy` resolves final dependency versions.
-
----
-
 ## Branch protection (main)
 
 | Rule | Value |
@@ -161,7 +138,7 @@ All changes must go through a PR that passes CI and is approved.
 
 ## Helm chart notes
 
-- Image repo: `ghcr.io/pricefx/zalando-vertical-autoscaler`
+- Image repo: `ghcr.io/jiri-soukal-pfx/zalando-vertical-autoscaler`
 - CRD install controlled by `installCRD: true` (default)
 - Leader election disabled by default (`leaderElect: false`); enable for HA
   deployments with `replicaCount > 1`
