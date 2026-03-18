@@ -88,26 +88,7 @@ func (r *PostgresMemoryPolicyReconciler) Reconcile(ctx context.Context, req ctrl
 func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Step 1: Sync VPA recommendation.
-	rec, err := r.vpaReader.ReadRecommendation(ctx, policy)
-	if err != nil {
-		recErr, ok := err.(*RecommendationError)
-		if ok {
-			SetCondition(policy, policyv1alpha1.ConditionVPARecommendationReady,
-				metav1.ConditionFalse, recErr.Reason, recErr.Message)
-			r.Recorder.Event(policy, "Warning", recErr.Reason, recErr.Message)
-			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
-		}
-		return ctrl.Result{}, fmt.Errorf("reading VPA recommendation: %w", err)
-	}
-
-	SetCondition(policy, policyv1alpha1.ConditionVPARecommendationReady,
-		metav1.ConditionTrue, "Ready", "VPA recommendation is available")
-
-	memTarget := rec.Memory
-	policy.Status.MemoryTarget = &memTarget
-
-	// Step 1.5: Bootstrap — if the Zalando CR has no memory set and InitialMemory
+	// Step 1: Bootstrap — if the Zalando CR has no memory set and InitialMemory
 	// is configured, apply initial resources immediately (no window check, no change gates).
 	currentMemory, err := r.zalandoPatcher.GetCurrentMemory(ctx, policy.Namespace, policy.Spec.TargetCluster)
 	if err != nil {
@@ -141,6 +122,25 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
+
+	// Step 2: Sync VPA recommendation.
+	rec, err := r.vpaReader.ReadRecommendation(ctx, policy)
+	if err != nil {
+		recErr, ok := err.(*RecommendationError)
+		if ok {
+			SetCondition(policy, policyv1alpha1.ConditionVPARecommendationReady,
+				metav1.ConditionFalse, recErr.Reason, recErr.Message)
+			r.Recorder.Event(policy, "Warning", recErr.Reason, recErr.Message)
+			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("reading VPA recommendation: %w", err)
+	}
+
+	SetCondition(policy, policyv1alpha1.ConditionVPARecommendationReady,
+		metav1.ConditionTrue, "Ready", "VPA recommendation is available")
+
+	memTarget := rec.Memory
+	policy.Status.MemoryTarget = &memTarget
 
 	// Step 2: Evaluate maintenance window.
 	now := time.Now()
