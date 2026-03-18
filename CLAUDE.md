@@ -97,18 +97,26 @@ forward from `now - 366d` to find the most recent fire.
 
 ## Development workflow
 
+### Run all tests (recommended)
+```bash
+./run-tests.sh
+```
+This script installs `setup-envtest`, downloads k8s 1.31 binaries, runs
+`go mod tidy`, and executes **all** tests (unit + integration/envtest) in one
+step. No prerequisites beyond Go 1.24+.
+
 ### Build & vet
 ```bash
 go build ./...
 go vet ./...
 ```
 
-### Unit tests (no cluster needed)
+### Unit tests only (no cluster needed)
 ```bash
 go test ./internal/controller/... -run 'Test[^C]' -v
 ```
 
-### Integration tests (envtest — requires k8s binaries)
+### Integration tests only (envtest — requires k8s binaries)
 ```bash
 go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 export KUBEBUILDER_ASSETS=$(setup-envtest use 1.31 -p path)
