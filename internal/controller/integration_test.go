@@ -564,6 +564,97 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		Expect(updated.Status.CurrentMemory.String()).To(Equal("8Gi"))
 	})
 
+	It("applies initialMemory when the VPA does not yet exist", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+
+		// No VPA is created here on purpose to simulate 'VPA not ready yet'.
+		makeZalandoClusterNoResources(ctx, ns.Name, pgName, "Running")
+
+		initialMem := resource.MustParse("8Gi")
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronNeverOpen)
+		policy.Spec.InitialMemory = &initialMem
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		result, err := reconcilePolicy(ctx, policy)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(1 * time.Minute))
+
+		// Verify the Zalando CR was patched with initial resources.
+		pg := &unstructured.Unstructured{}
+		pg.SetGroupVersionKind(zalandoGVK)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pgName, Namespace: ns.Name}, pg)).To(Succeed())
+
+		memReq, _, _ := unstructured.NestedString(pg.Object, "spec", "resources", "requests", "memory")
+		Expect(memReq).To(Equal("8Gi"))
+
+		memLimit, _, _ := unstructured.NestedString(pg.Object, "spec", "resources", "limits", "memory")
+		Expect(memLimit).To(Equal("8Gi")) // overcommit=1
+
+		cpuReq, _, _ := unstructured.NestedString(pg.Object, "spec", "resources", "requests", "cpu")
+		Expect(cpuReq).To(Equal("800m")) // 8Gi → 800m at 10:1 ratio
+
+		// No maintenance history — this is bootstrap, not maintenance.
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(BeEmpty())
+		Expect(updated.Status.CurrentMemory).NotTo(BeNil())
+		Expect(updated.Status.CurrentMemory.String()).To(Equal("8Gi"))
+	})
+
+	It("applies initialMemory when the VPA exists but has no recommendation", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+
+		// Create a VPA object without a status.recommendation to simulate VPA not ready.
+		vpa := &vpav1.VerticalPodAutoscaler{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      vpaName,
+				Namespace: ns.Name,
+			},
+			Spec: vpav1.VerticalPodAutoscalerSpec{
+				TargetRef: &autoscalingv1.CrossVersionObjectReference{
+					APIVersion: zalandoGVK.GroupVersion().String(),
+					Kind:       zalandoGVK.Kind,
+					Name:       pgName,
+				},
+			},
+		}
+		Expect(k8sClient.Create(ctx, vpa)).To(Succeed())
+
+		makeZalandoClusterNoResources(ctx, ns.Name, pgName, "Running")
+
+		initialMem := resource.MustParse("8Gi")
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronNeverOpen)
+		policy.Spec.InitialMemory = &initialMem
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		result, err := reconcilePolicy(ctx, policy)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(1 * time.Minute))
+
+		// Verify the Zalando CR was patched with initial resources.
+		pg := &unstructured.Unstructured{}
+		pg.SetGroupVersionKind(zalandoGVK)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pgName, Namespace: ns.Name}, pg)).To(Succeed())
+
+		memReq, _, _ := unstructured.NestedString(pg.Object, "spec", "resources", "requests", "memory")
+		Expect(memReq).To(Equal("8Gi"))
+
+		memLimit, _, _ := unstructured.NestedString(pg.Object, "spec", "resources", "limits", "memory")
+		Expect(memLimit).To(Equal("8Gi")) // overcommit=1
+
+		cpuReq, _, _ := unstructured.NestedString(pg.Object, "spec", "resources", "requests", "cpu")
+		Expect(cpuReq).To(Equal("800m")) // 8Gi → 800m at 10:1 ratio
+
+		// No maintenance history — this is bootstrap, not maintenance.
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(BeEmpty())
+		Expect(updated.Status.CurrentMemory).NotTo(BeNil())
+		Expect(updated.Status.CurrentMemory.String()).To(Equal("8Gi"))
+	})
+
 	// ── Scenario 10: InitialMemory NOT applied when Zalando CR already has resources ─
 
 	It("does not apply initialMemory when the Zalando CR already has resources", func() {
