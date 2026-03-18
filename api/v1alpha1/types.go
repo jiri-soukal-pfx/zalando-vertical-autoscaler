@@ -49,7 +49,8 @@ type PostgresMemoryPolicySpec struct {
 	// spec.resources.requests.memory set. This bootstraps new clusters before VPA
 	// has produced a recommendation. Applied immediately, bypassing the maintenance
 	// window and change gates. CPU is derived automatically at a 10:1 memory-to-CPU
-	// ratio (e.g., 10Gi memory → 1000m CPU).
+	// ratio (e.g., 10Gi memory → 1000m CPU), with a minimum of 100m CPU even when
+	// the 10:1 ratio would result in a lower value (for example, <1Gi memory → 100m CPU).
 	// +optional
 	InitialMemory *resource.Quantity `json:"initialMemory,omitempty"`
 
