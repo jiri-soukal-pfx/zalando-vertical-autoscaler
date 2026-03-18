@@ -2,7 +2,7 @@
 
 ### Goal
 
-Add an `initialMemory` (and derived `initialCPU`) field to `PostgresMemoryPolicySpec` that seeds the Zalando `postgresql` CR with initial resource values when it has no `spec.resources.requests.memory` set. This bootstraps new PG clusters created without explicit resources (e.g., when a Helm chart deliberately omits `spec.resources` to delegate memory management to this operator).
+Add an `initialMemory` field to `PostgresMemoryPolicySpec` that seeds the Zalando `postgresql` CR with initial resource values when it has no `spec.resources.requests.memory` set, with CPU derived automatically from this memory value. This bootstraps new PG clusters created without explicit resources (e.g., when a Helm chart deliberately omits `spec.resources` to delegate memory management to this operator).
 
 ### Context
 
