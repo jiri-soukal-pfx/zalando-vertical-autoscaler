@@ -19,4 +19,4 @@ echo "==> Running go mod tidy..."
 go mod tidy
 
 echo "==> Running tests..."
-go test ./internal/controller/... -v -timeout 120s
+go test ./internal/controller/... -v -count=1 -timeout 120s

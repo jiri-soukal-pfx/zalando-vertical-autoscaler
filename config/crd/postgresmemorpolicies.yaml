@@ -90,6 +90,16 @@ spec:
                 description: Overcommit sets limits = requests * overcommit.
                 minimum: 1
                 type: number
+              postgresParameters:
+                additionalProperties:
+                  type: string
+                description: "PostgresParameters maps PostgreSQL parameter names to
+                  Go template expressions. Templates receive .memory (bytes) and .cpu
+                  (cores) as inputs. Values starting with \"{{\" are evaluated as Go
+                  templates; others are used as-is. Available functions: div, mul, add,
+                  max. Evaluated parameters are patched into spec.postgresql.parameters
+                  on the Zalando CR."
+                type: object
               postActions:
                 description: PostActions are executed in order after a successful
                   PG cluster update.

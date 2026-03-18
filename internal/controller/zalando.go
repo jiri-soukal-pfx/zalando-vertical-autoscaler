@@ -102,8 +102,9 @@ func (p *ZalandoPatcher) GetCurrentMemory(ctx context.Context, namespace, name s
 	return &q, nil
 }
 
-// PatchResources patches the Zalando postgresql CR with new memory and optionally CPU values.
-func (p *ZalandoPatcher) PatchResources(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, rec *VPARecommendation) error {
+// PatchResources patches the Zalando postgresql CR with new memory, optionally CPU values,
+// and optionally computed PostgreSQL parameters.
+func (p *ZalandoPatcher) PatchResources(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, rec *VPARecommendation, pgParams map[string]string) error {
 	memRequest := rec.Memory
 	overcommit := policy.Spec.Overcommit
 	if overcommit < 1 {
@@ -116,6 +117,10 @@ func (p *ZalandoPatcher) PatchResources(ctx context.Context, policy *policyv1alp
 
 	if rec.CPU != nil {
 		patchData = buildMemoryCPUPatch(memRequest.String(), memLimit.String(), rec.CPU.String())
+	}
+
+	if len(pgParams) > 0 {
+		addPostgresParametersPatch(patchData, pgParams)
 	}
 
 	raw, err := json.Marshal(patchData)
@@ -216,6 +221,20 @@ func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest string) map[string]int
 				},
 			},
 		},
+	}
+}
+
+// addPostgresParametersPatch merges computed PostgreSQL parameters into an existing patch map
+// at spec.postgresql.parameters.
+func addPostgresParametersPatch(patchData map[string]interface{}, pgParams map[string]string) {
+	params := make(map[string]interface{}, len(pgParams))
+	for k, v := range pgParams {
+		params[k] = v
+	}
+
+	spec := patchData["spec"].(map[string]interface{})
+	spec["postgresql"] = map[string]interface{}{
+		"parameters": params,
 	}
 }
 

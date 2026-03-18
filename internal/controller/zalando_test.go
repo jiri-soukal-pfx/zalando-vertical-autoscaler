@@ -107,6 +107,59 @@ func TestBuildMemoryCPUPatch(t *testing.T) {
 	}
 }
 
+func TestAddPostgresParametersPatch(t *testing.T) {
+	patch := buildMemoryCPUPatch("32Gi", "32Gi", "4")
+	pgParams := map[string]string{
+		"shared_buffers":    "1398101",
+		"work_mem":          "131072",
+		"max_connections":   "300",
+	}
+	addPostgresParametersPatch(patch, pgParams)
+
+	spec := patch["spec"].(map[string]interface{})
+
+	// Resources should still be present.
+	resources := spec["resources"].(map[string]interface{})
+	requests := resources["requests"].(map[string]interface{})
+	if requests["memory"] != "32Gi" {
+		t.Errorf("memory request = %v, want 32Gi", requests["memory"])
+	}
+
+	// PostgreSQL parameters should be present.
+	pg, ok := spec["postgresql"].(map[string]interface{})
+	if !ok {
+		t.Fatal("postgresql not found in patch spec")
+	}
+	params, ok := pg["parameters"].(map[string]interface{})
+	if !ok {
+		t.Fatal("parameters not found in patch spec.postgresql")
+	}
+	if params["shared_buffers"] != "1398101" {
+		t.Errorf("shared_buffers = %v, want 1398101", params["shared_buffers"])
+	}
+	if params["work_mem"] != "131072" {
+		t.Errorf("work_mem = %v, want 131072", params["work_mem"])
+	}
+	if params["max_connections"] != "300" {
+		t.Errorf("max_connections = %v, want 300", params["max_connections"])
+	}
+}
+
+func TestAddPostgresParametersPatch_MemoryOnlyPatch(t *testing.T) {
+	patch := buildMemoryPatch("16Gi", "16Gi")
+	pgParams := map[string]string{
+		"shared_buffers": "699050",
+	}
+	addPostgresParametersPatch(patch, pgParams)
+
+	spec := patch["spec"].(map[string]interface{})
+	pg := spec["postgresql"].(map[string]interface{})
+	params := pg["parameters"].(map[string]interface{})
+	if params["shared_buffers"] != "699050" {
+		t.Errorf("shared_buffers = %v, want 699050", params["shared_buffers"])
+	}
+}
+
 func TestOvercommitCalculation(t *testing.T) {
 	tests := []struct {
 		name        string

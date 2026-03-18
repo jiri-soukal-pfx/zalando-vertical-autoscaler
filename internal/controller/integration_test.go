@@ -706,7 +706,89 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
 	})
 
-	// ── Scenario 12: InitialMemory with overcommit > 1 ──────────────────────
+	// ── Scenario 12: PostgresParameters are calculated and patched ────────
+
+	It("calculates and patches PostgreSQL parameters alongside resources during maintenance", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		// target = 32Gi, current = 1Gi → passes all gates
+		makeVPA(ctx, ns.Name, vpaName, "32Gi", 4000) // 4000m = 4 cores
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
+		policy.Spec.PostgresParameters = map[string]string{
+			"shared_buffers":       `{{ div (div .memory 3) 8192 }}`,
+			"work_mem":             `{{ div (div .memory 256) 1024 }}`,
+			"effective_cache_size": `{{ div (div (mul .memory 3) 4) 1024 }}kB`,
+			"max_worker_processes": `{{ max 24 (add (div .cpu 2) .cpu) }}`,
+			"max_connections":      "300", // static value, should pass through
+		}
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+
+		// Verify PG parameters were patched on the Zalando CR.
+		pg := &unstructured.Unstructured{}
+		pg.SetGroupVersionKind(zalandoGVK)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pgName, Namespace: ns.Name}, pg)).To(Succeed())
+
+		params, found, err := unstructured.NestedStringMap(pg.Object, "spec", "postgresql", "parameters")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+
+		// 32Gi = 34359738368 bytes, 4 cores
+		// shared_buffers: div(div(34359738368, 3), 8192) = 1398101
+		Expect(params["shared_buffers"]).To(Equal("1398101"))
+		// work_mem: div(div(34359738368, 256), 1024) = 131072
+		Expect(params["work_mem"]).To(Equal("131072"))
+		// effective_cache_size with kB suffix
+		Expect(params["effective_cache_size"]).To(Equal("25165824kB"))
+		// max_worker_processes: max(24, add(2, 4)) = 24
+		Expect(params["max_worker_processes"]).To(Equal("24"))
+		// static value passes through
+		Expect(params["max_connections"]).To(Equal("300"))
+	})
+
+	It("patches PostgreSQL parameters during bootstrap with initialMemory", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
+		makeZalandoClusterNoResources(ctx, ns.Name, pgName, "Running")
+
+		initialMem := resource.MustParse("16Gi")
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronNeverOpen)
+		policy.Spec.InitialMemory = &initialMem
+		policy.Spec.PostgresParameters = map[string]string{
+			"shared_buffers": `{{ div (div .memory 3) 8192 }}`,
+			"max_connections": "300",
+		}
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		result, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(1 * time.Minute))
+
+		// Verify PG parameters were patched.
+		pg := &unstructured.Unstructured{}
+		pg.SetGroupVersionKind(zalandoGVK)
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: pgName, Namespace: ns.Name}, pg)).To(Succeed())
+
+		params, found, err := unstructured.NestedStringMap(pg.Object, "spec", "postgresql", "parameters")
+		Expect(err).NotTo(HaveOccurred())
+		Expect(found).To(BeTrue())
+
+		// 16Gi = 17179869184 bytes
+		// shared_buffers: div(div(17179869184, 3), 8192) = 699050
+		Expect(params["shared_buffers"]).To(Equal("699050"))
+		Expect(params["max_connections"]).To(Equal("300"))
+	})
+
+	// ── Scenario 13: InitialMemory with overcommit > 1 ──────────────────────
 
 	It("applies initialMemory with overcommit factor for memory limits", func() {
 		vpaName := uniqueName("vpa")

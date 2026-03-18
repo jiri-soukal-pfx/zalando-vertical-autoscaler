@@ -64,6 +64,15 @@ type PostgresMemoryPolicySpec struct {
 	// PostActions are executed in order after a successful PG cluster update.
 	// +optional
 	PostActions []PostActionSpec `json:"postActions,omitempty"`
+
+	// PostgresParameters maps PostgreSQL parameter names to Go template expressions.
+	// Templates receive .memory (bytes int64) and .cpu (cores int64) as inputs.
+	// Values starting with "{{" are evaluated as Go templates; others are used as-is.
+	// Available template functions: div, mul, add, max (all operate on int64).
+	// Evaluated parameters are patched into spec.postgresql.parameters on the Zalando CR.
+	// Example: shared_buffers: "{{ div (div .memory 3) 8192 }}"
+	// +optional
+	PostgresParameters map[string]string `json:"postgresParameters,omitempty"`
 }
 
 // MaintenanceWindowSpec defines when the operator may perform maintenance.
