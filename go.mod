@@ -3,9 +3,9 @@ module github.com/pricefx/zalando-vertical-autoscaler
 go 1.24
 
 require (
+	github.com/adhocore/gronx v1.19.6
 	github.com/onsi/ginkgo/v2 v2.20.2
 	github.com/onsi/gomega v1.34.1
-	github.com/robfig/cron/v3 v3.0.1
 	k8s.io/api v0.31.3
 	k8s.io/apimachinery v0.31.3
 	k8s.io/autoscaler/vertical-pod-autoscaler v1.0.0
