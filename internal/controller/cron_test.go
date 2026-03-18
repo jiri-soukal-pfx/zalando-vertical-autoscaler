@@ -197,3 +197,105 @@ func TestRequeueAfter_OutsideWindow(t *testing.T) {
 		t.Errorf("RequeueAfter=%v, want %v", d, expected)
 	}
 }
+
+func TestWindowEvaluator_NthWeekday(t *testing.T) {
+e := NewWindowEvaluator()
+
+// "0 20 * * 0#2" = second Sunday of the month at 20:00.
+// Jan 2024: 1st Sunday=7th, 2nd Sunday=14th
+// Feb 2024: 1st Sunday=4th, 2nd Sunday=11th
+tests := []struct {
+name         string
+now          time.Time
+wantInWindow bool
+}{
+{
+name:         "second Sunday of Jan at window start",
+now:          time.Date(2024, 1, 14, 20, 0, 0, 0, time.UTC),
+wantInWindow: true,
+},
+{
+name:         "second Sunday of Jan mid-window",
+now:          time.Date(2024, 1, 14, 20, 30, 0, 0, time.UTC),
+wantInWindow: true,
+},
+{
+name:         "first Sunday of Jan - not second Sunday",
+now:          time.Date(2024, 1, 7, 20, 15, 0, 0, time.UTC),
+wantInWindow: false,
+},
+{
+name:         "third Sunday of Jan - not second Sunday",
+now:          time.Date(2024, 1, 21, 20, 15, 0, 0, time.UTC),
+wantInWindow: false,
+},
+{
+name:         "second Sunday of Feb 2024",
+now:          time.Date(2024, 2, 11, 20, 15, 0, 0, time.UTC),
+wantInWindow: true,
+},
+}
+
+for _, tc := range tests {
+t.Run(tc.name, func(t *testing.T) {
+result, err := e.Evaluate("0 20 * * 0#2", 60, tc.now)
+if err != nil {
+t.Fatalf("unexpected error: %v", err)
+}
+if result.InWindow != tc.wantInWindow {
+t.Errorf("InWindow=%v, want %v", result.InWindow, tc.wantInWindow)
+}
+})
+}
+}
+
+func TestWindowEvaluator_NearestWeekday(t *testing.T) {
+e := NewWindowEvaluator()
+
+// "0 20 15W * *" = nearest weekday to the 15th of each month at 20:00.
+// Jan 15 2024 is a Monday (weekday), so fires on Jan 15.
+// Jun 15 2024 is a Saturday; nearest weekday is Friday Jun 14.
+tests := []struct {
+name         string
+now          time.Time
+wantInWindow bool
+}{
+{
+name:         "Jan 15 2024 is Monday - in window",
+now:          time.Date(2024, 1, 15, 20, 0, 0, 0, time.UTC),
+wantInWindow: true,
+},
+{
+name:         "Jan 15 2024 mid-window",
+now:          time.Date(2024, 1, 15, 20, 45, 0, 0, time.UTC),
+wantInWindow: true,
+},
+{
+name:         "Jan 14 2024 Sunday before - outside window",
+now:          time.Date(2024, 1, 14, 20, 0, 0, 0, time.UTC),
+wantInWindow: false,
+},
+{
+name:         "Jun 14 2024 Friday nearest weekday to Sat Jun 15 - in window",
+now:          time.Date(2024, 6, 14, 20, 30, 0, 0, time.UTC),
+wantInWindow: true,
+},
+{
+name:         "Jun 15 2024 Saturday itself - outside window",
+now:          time.Date(2024, 6, 15, 20, 0, 0, 0, time.UTC),
+wantInWindow: false,
+},
+}
+
+for _, tc := range tests {
+t.Run(tc.name, func(t *testing.T) {
+result, err := e.Evaluate("0 20 15W * *", 60, tc.now)
+if err != nil {
+t.Fatalf("unexpected error: %v", err)
+}
+if result.InWindow != tc.wantInWindow {
+t.Errorf("InWindow=%v, want %v", result.InWindow, tc.wantInWindow)
+}
+})
+}
+}

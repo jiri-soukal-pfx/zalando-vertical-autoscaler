@@ -14,23 +14,21 @@ const (
 
 // WindowEvaluator evaluates maintenance window cron expressions.
 // Supports extended 5-field syntax including L (last), W (weekday), and # (nth).
-type WindowEvaluator struct {
-	gron *gronx.Gronx
-}
+type WindowEvaluator struct{}
 
 // NewWindowEvaluator returns a WindowEvaluator supporting extended 5-field cron
 // syntax (L, W, #) in addition to standard expressions.
 func NewWindowEvaluator() *WindowEvaluator {
-	return &WindowEvaluator{
-		gron: gronx.New(),
-	}
+	return &WindowEvaluator{}
 }
 
 // WindowResult holds the result of a window evaluation.
 type WindowResult struct {
 	// InWindow is true if now falls within an open maintenance window.
 	InWindow bool
-	// NextOpen is when the next window will open (valid when InWindow is false).
+	// NextOpen is when the next window will open.
+	// When InWindow is false, it is the upcoming window start.
+	// When InWindow is true, it is the current window's start time.
 	NextOpen time.Time
 	// WindowEnd is when the current (or next) window will close.
 	WindowEnd time.Time
@@ -39,7 +37,7 @@ type WindowResult struct {
 // Evaluate determines whether now is within the maintenance window defined by
 // cronExpr (5-field, with extended syntax support) and timeoutMinutes.
 func (e *WindowEvaluator) Evaluate(cronExpr string, timeoutMinutes int, now time.Time) (WindowResult, error) {
-	if !e.gron.IsValid(cronExpr) {
+	if !gronx.IsValid(cronExpr) {
 		return WindowResult{}, fmt.Errorf("invalid cron expression: %q", cronExpr)
 	}
 
