@@ -68,7 +68,11 @@ type PostgresMemoryPolicySpec struct {
 
 // MaintenanceWindowSpec defines when the operator may perform maintenance.
 type MaintenanceWindowSpec struct {
-	// Cron is a standard 5-field cron expression defining the start of the maintenance window.
+	// Cron is a 5-field cron expression (minute hour dom month dow) defining the
+	// start of the maintenance window. Extended syntax is supported:
+	//   L  - last day-of-week in month (e.g. "0 20 * * 0L" = last Sunday at 20:00)
+	//   #  - nth day-of-week in month  (e.g. "0 20 * * 0#2" = second Sunday at 20:00)
+	//   W  - nearest weekday           (e.g. "0 20 15W * *" = weekday nearest 15th at 20:00)
 	Cron string `json:"cron"`
 
 	// TimeoutMinutes is the maximum duration of the maintenance window in minutes.

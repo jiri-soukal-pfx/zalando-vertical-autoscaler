@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/robfig/cron/v3"
+	"github.com/adhocore/gronx"
 )
 
 const (
@@ -13,14 +13,16 @@ const (
 )
 
 // WindowEvaluator evaluates maintenance window cron expressions.
+// Supports extended 5-field syntax including L (last), W (weekday), and # (nth).
 type WindowEvaluator struct {
-	parser cron.Parser
+	gron *gronx.Gronx
 }
 
-// NewWindowEvaluator returns a WindowEvaluator using 5-field standard cron syntax.
+// NewWindowEvaluator returns a WindowEvaluator supporting extended 5-field cron
+// syntax (L, W, #) in addition to standard expressions.
 func NewWindowEvaluator() *WindowEvaluator {
 	return &WindowEvaluator{
-		parser: cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow),
+		gron: gronx.New(),
 	}
 }
 
@@ -35,24 +37,22 @@ type WindowResult struct {
 }
 
 // Evaluate determines whether now is within the maintenance window defined by
-// cronExpr (5-field) and timeoutMinutes.
+// cronExpr (5-field, with extended syntax support) and timeoutMinutes.
 func (e *WindowEvaluator) Evaluate(cronExpr string, timeoutMinutes int, now time.Time) (WindowResult, error) {
-	schedule, err := e.parser.Parse(cronExpr)
-	if err != nil {
-		return WindowResult{}, fmt.Errorf("parsing cron expression %q: %w", cronExpr, err)
+	if !e.gron.IsValid(cronExpr) {
+		return WindowResult{}, fmt.Errorf("invalid cron expression: %q", cronExpr)
 	}
 
-	// Find the most recent scheduled time at or before now.
-	// robfig/cron v3 only provides Next(), so we step back one interval to find
-	// the previous fire time. We do this by computing Next(now - 2*duration).
-	// Since we don't know the interval, we search the last fire within the last
-	// 366 days with a step-back of 1 minute.
-	prev := previousFire(schedule, now)
-
 	windowDuration := time.Duration(timeoutMinutes) * time.Minute
-	if prev.IsZero() {
+
+	// Find the most recent scheduled fire time at or before now.
+	prev, err := gronx.PrevTickBefore(cronExpr, now, true)
+	if err != nil {
 		// No previous fire found; compute next window.
-		next := schedule.Next(now)
+		next, nextErr := gronx.NextTickAfter(cronExpr, now, false)
+		if nextErr != nil {
+			return WindowResult{}, fmt.Errorf("finding next fire for %q: %w", cronExpr, nextErr)
+		}
 		return WindowResult{
 			InWindow:  false,
 			NextOpen:  next,
@@ -71,7 +71,10 @@ func (e *WindowEvaluator) Evaluate(cronExpr string, timeoutMinutes int, now time
 	}
 
 	// Outside the window; compute the next one.
-	next := schedule.Next(now)
+	next, err := gronx.NextTickAfter(cronExpr, now, false)
+	if err != nil {
+		return WindowResult{}, fmt.Errorf("finding next fire for %q: %w", cronExpr, err)
+	}
 	return WindowResult{
 		InWindow:  false,
 		NextOpen:  next,
@@ -95,25 +98,4 @@ func RequeueAfter(result WindowResult, now time.Time) time.Duration {
 		return cronRequeueJitter
 	}
 	return until + cronRequeueJitter
-}
-
-// previousFire finds the most recent fire time of schedule before or at now.
-// It searches backwards in 1-minute steps for up to 1 year.
-func previousFire(schedule cron.Schedule, now time.Time) time.Time {
-	const maxLookback = 366 * 24 * time.Hour
-	// Try each minute step going back.
-	// We use Next to find fires in the upcoming period from candidate.
-	// candidate starts at now - maxLookback, and we find Next until it crosses now.
-	start := now.Add(-maxLookback)
-	var last time.Time
-	t := start
-	for {
-		next := schedule.Next(t)
-		if next.IsZero() || next.After(now) {
-			break
-		}
-		last = next
-		t = next
-	}
-	return last
 }

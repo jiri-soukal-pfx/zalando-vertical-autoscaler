@@ -49,8 +49,12 @@ spec:
                 description: MaintenanceWindow defines when maintenance may be performed.
                 properties:
                   cron:
-                    description: Cron is a standard 5-field cron expression defining
-                      the start of the maintenance window.
+                    description: 'Cron is a 5-field cron expression (minute hour
+                      dom month dow) defining the start of the maintenance window.
+                      Extended syntax is supported: L (last day-of-week in month,
+                      e.g. "0 20 * * 0L" for last Sunday at 20:00), # (nth day-of-week,
+                      e.g. "0 20 * * 0#2" for second Sunday at 20:00), W (nearest
+                      weekday).'
                     type: string
                   timeoutMinutes:
                     default: 60

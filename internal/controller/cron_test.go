@@ -90,6 +90,86 @@ func TestWindowEvaluator_NextOpen(t *testing.T) {
 	}
 }
 
+func TestWindowEvaluator_LastSunday(t *testing.T) {
+	e := NewWindowEvaluator()
+
+	// Jan 2024: last Sunday is the 28th
+	// Feb 2024: last Sunday is the 25th
+	tests := []struct {
+		name           string
+		cronExpr       string
+		timeoutMinutes int
+		now            time.Time
+		wantInWindow   bool
+	}{
+		{
+			name:           "last Sunday of Jan at window start",
+			cronExpr:       "0 20 * * 0L",
+			timeoutMinutes: 60,
+			now:            time.Date(2024, 1, 28, 20, 0, 0, 0, time.UTC),
+			wantInWindow:   true,
+		},
+		{
+			name:           "last Sunday of Jan mid-window",
+			cronExpr:       "0 20 * * 0L",
+			timeoutMinutes: 60,
+			now:            time.Date(2024, 1, 28, 20, 30, 0, 0, time.UTC),
+			wantInWindow:   true,
+		},
+		{
+			name:           "non-last Sunday of Jan - outside window",
+			cronExpr:       "0 20 * * 0L",
+			timeoutMinutes: 60,
+			now:            time.Date(2024, 1, 21, 20, 30, 0, 0, time.UTC),
+			wantInWindow:   false,
+		},
+		{
+			name:           "last Sunday of Feb 2024",
+			cronExpr:       "0 20 * * 0L",
+			timeoutMinutes: 60,
+			now:            time.Date(2024, 2, 25, 20, 15, 0, 0, time.UTC),
+			wantInWindow:   true,
+		},
+		{
+			name:           "day after last Sunday - outside window",
+			cronExpr:       "0 20 * * 0L",
+			timeoutMinutes: 60,
+			now:            time.Date(2024, 1, 29, 10, 0, 0, 0, time.UTC),
+			wantInWindow:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := e.Evaluate(tc.cronExpr, tc.timeoutMinutes, tc.now)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.InWindow != tc.wantInWindow {
+				t.Errorf("InWindow=%v, want %v", result.InWindow, tc.wantInWindow)
+			}
+		})
+	}
+}
+
+func TestWindowEvaluator_LastSunday_NextOpen(t *testing.T) {
+	e := NewWindowEvaluator()
+
+	// Jan 29, 2024 (day after last Sunday) -> next should be Feb 25
+	now := time.Date(2024, 1, 29, 10, 0, 0, 0, time.UTC)
+	result, err := e.Evaluate("0 20 * * 0L", 60, now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.InWindow {
+		t.Fatal("expected to be outside window")
+	}
+	expected := time.Date(2024, 2, 25, 20, 0, 0, 0, time.UTC)
+	if !result.NextOpen.Equal(expected) {
+		t.Errorf("NextOpen=%v, want %v", result.NextOpen, expected)
+	}
+}
+
 func TestRequeueAfter_InWindow(t *testing.T) {
 	now := time.Date(2024, 1, 15, 2, 30, 0, 0, time.UTC)
 	windowEnd := time.Date(2024, 1, 15, 3, 0, 0, 0, time.UTC)

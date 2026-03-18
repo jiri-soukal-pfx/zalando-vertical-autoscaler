@@ -78,6 +78,8 @@ spec:
   maintenanceWindow:
     # Every Sunday at 03:00 UTC
     cron: "0 3 * * 0"
+    # Or: last Sunday of the month at 20:00 UTC
+    # cron: "0 20 * * 0L"
     # Window stays open for 60 minutes
     timeoutMinutes: 60
 
@@ -139,13 +141,34 @@ The last 10 runs are recorded in `.status.maintenanceHistory` with status, timin
 | `spec.memoryMax` | *required* | Upper bound for memory |
 | `spec.overcommit` | `1` | Memory limit multiplier (`limits = requests * overcommit`) |
 | `spec.initialMemory` | - | Memory to apply when the Zalando CR has no resources set (bootstrap) |
-| `spec.maintenanceWindow.cron` | *required* | 5-field cron expression (UTC) |
+| `spec.maintenanceWindow.cron` | *required* | 5-field cron expression (UTC). Supports `L` (last), `#` (nth), `W` (weekday) |
 | `spec.maintenanceWindow.timeoutMinutes` | `60` | How long the window stays open |
 | `spec.safetyGates.requireHealthyCluster` | `true` | Require cluster status `Running` |
 | `spec.postActions[].action` | - | `RolloutRestart` |
 | `spec.postActions[].target.kind` | - | `Deployment`, `StatefulSet`, or `DaemonSet` |
 | `spec.postActions[].target.name` | - | Workload name |
 | `spec.postActions[].target.namespace` | policy namespace | Override target namespace |
+
+## Cron syntax
+
+Maintenance windows use [gronx](https://github.com/adhocore/gronx) for cron parsing, which supports standard 5-field expressions plus extended modifiers:
+
+| Modifier | Field | Meaning | Example | Fires at |
+|----------|-------|---------|---------|----------|
+| `L` | day-of-week | Last occurrence in month | `0 20 * * 0L` | Last Sunday at 20:00 |
+| `L` | day-of-month | Last day of month | `0 20 L * *` | Last day of month at 20:00 |
+| `#` | day-of-week | Nth occurrence in month | `0 20 * * 0#2` | Second Sunday at 20:00 |
+| `W` | day-of-month | Nearest weekday | `0 20 15W * *` | Weekday nearest 15th at 20:00 |
+
+Standard expressions work as expected:
+
+| Expression | Fires at |
+|------------|----------|
+| `0 3 * * 0` | Every Sunday at 03:00 |
+| `0 2 * * 1-5` | Weekdays at 02:00 |
+| `30 4 1 * *` | 1st of every month at 04:30 |
+
+All times are evaluated in **UTC**. See the full [gronx documentation](https://github.com/adhocore/gronx#cron-expression) for details.
 
 ## Design decisions
 
