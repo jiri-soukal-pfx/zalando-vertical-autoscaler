@@ -93,7 +93,7 @@ func TestBuildMemoryPatch(t *testing.T) {
 }
 
 func TestBuildMemoryCPUPatch(t *testing.T) {
-	patch := buildMemoryCPUPatch("16Gi", "32Gi", "2", "4")
+	patch := buildMemoryCPUPatch("16Gi", "32Gi", "2")
 	spec := patch["spec"].(map[string]interface{})
 	resources := spec["resources"].(map[string]interface{})
 	requests := resources["requests"].(map[string]interface{})
@@ -102,8 +102,8 @@ func TestBuildMemoryCPUPatch(t *testing.T) {
 	if requests["cpu"] != "2" {
 		t.Errorf("cpu request = %v, want 2", requests["cpu"])
 	}
-	if limits["cpu"] != "4" {
-		t.Errorf("cpu limit = %v, want 4", limits["cpu"])
+	if _, hasCPULimit := limits["cpu"]; hasCPULimit {
+		t.Error("limits.cpu should not be set (no CPU limits policy)")
 	}
 }
 

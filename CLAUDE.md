@@ -71,9 +71,8 @@ Do **not** set CPU limits anywhere (Kubernetes manifests, Helm values, operator
 output). CPU limits cause throttling and are considered harmful in this project.
 CPU *requests* are fine. This applies to:
 - `charts/zalando-vertical-autoscaler/values.yaml` — only `limits.memory` is set
-- The Zalando CR patch in `zalando.go` — CPU limits are computed from the VPA
-  CPU recommendation × overcommit only when CPU requests are present; do not
-  add CPU limits independently
+- The Zalando CR patch in `zalando.go` — only `requests.cpu` is set from the
+  VPA CPU recommendation; `limits.cpu` is never written
 
 ### Zalando CR is patched with unstructured client
 The Zalando `postgresql` CR is accessed via `unstructured.Unstructured` + merge

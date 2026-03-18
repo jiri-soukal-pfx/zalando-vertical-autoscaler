@@ -115,9 +115,7 @@ func (p *ZalandoPatcher) PatchResources(ctx context.Context, policy *policyv1alp
 	patchData := buildMemoryPatch(memRequest.String(), memLimit.String())
 
 	if rec.CPU != nil {
-		cpuLimitMillis := int64(float64(rec.CPU.MilliValue()) * overcommit)
-		cpuLimit := resource.NewMilliQuantity(cpuLimitMillis, resource.DecimalSI)
-		patchData = buildMemoryCPUPatch(memRequest.String(), memLimit.String(), rec.CPU.String(), cpuLimit.String())
+		patchData = buildMemoryCPUPatch(memRequest.String(), memLimit.String(), rec.CPU.String())
 	}
 
 	raw, err := json.Marshal(patchData)
@@ -204,7 +202,8 @@ func buildMemoryPatch(memRequest, memLimit string) map[string]interface{} {
 }
 
 // buildMemoryCPUPatch constructs a merge-patch map for memory and CPU resources.
-func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest, cpuLimit string) map[string]interface{} {
+// Only CPU requests are set — CPU limits are never applied (see "No CPU limits" policy).
+func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest string) map[string]interface{} {
 	return map[string]interface{}{
 		"spec": map[string]interface{}{
 			"resources": map[string]interface{}{
@@ -214,7 +213,6 @@ func buildMemoryCPUPatch(memRequest, memLimit, cpuRequest, cpuLimit string) map[
 				},
 				"limits": map[string]interface{}{
 					"memory": memLimit,
-					"cpu":    cpuLimit,
 				},
 			},
 		},
