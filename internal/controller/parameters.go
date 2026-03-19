@@ -9,7 +9,12 @@ import (
 
 // templateFuncs provides Sprig-compatible integer math functions for PG parameter templates.
 var templateFuncs = template.FuncMap{
-	"div": func(a, b int64) int64 { return a / b },
+	"div": func(a, b int64) (int64, error) {
+		if b == 0 {
+			return 0, fmt.Errorf("division by zero")
+		}
+		return a / b, nil
+	},
 	"mul": func(a, b int64) int64 { return a * b },
 	"add": func(a, b int64) int64 { return a + b },
 	"max": func(a, b int64) int64 {
@@ -64,7 +69,7 @@ func evaluateParameter(name, tmplStr string, data parameterData) (string, error)
 		"cpu":    data.CPU,
 	}
 
-	t, err := template.New(name).Funcs(templateFuncs).Parse(tmplStr)
+	t, err := template.New(name).Option("missingkey=error").Funcs(templateFuncs).Parse(tmplStr)
 	if err != nil {
 		return "", fmt.Errorf("parsing template: %w", err)
 	}

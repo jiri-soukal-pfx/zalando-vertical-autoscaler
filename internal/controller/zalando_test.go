@@ -160,6 +160,29 @@ func TestAddPostgresParametersPatch_MemoryOnlyPatch(t *testing.T) {
 	}
 }
 
+func TestAddPostgresParametersPatch_PreservesExistingPostgresql(t *testing.T) {
+	patch := buildMemoryPatch("16Gi", "16Gi")
+	// Simulate pre-existing spec.postgresql content.
+	spec := patch["spec"].(map[string]interface{})
+	spec["postgresql"] = map[string]interface{}{
+		"version": "16",
+	}
+
+	pgParams := map[string]string{
+		"shared_buffers": "699050",
+	}
+	addPostgresParametersPatch(patch, pgParams)
+
+	pg := spec["postgresql"].(map[string]interface{})
+	if pg["version"] != "16" {
+		t.Errorf("existing postgresql.version was overwritten: got %v, want 16", pg["version"])
+	}
+	params := pg["parameters"].(map[string]interface{})
+	if params["shared_buffers"] != "699050" {
+		t.Errorf("shared_buffers = %v, want 699050", params["shared_buffers"])
+	}
+}
+
 func TestOvercommitCalculation(t *testing.T) {
 	tests := []struct {
 		name        string

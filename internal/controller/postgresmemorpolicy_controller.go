@@ -111,7 +111,7 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 			CPU:    cpuQuantity,
 		}
 
-		pgParams, err := calculatePGParams(policy, memBytes, cpuMillis/1000)
+		pgParams, err := calculatePGParams(policy, memBytes, cpuCores(initialRec))
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("calculating PG parameters for bootstrap: %w", err)
 		}

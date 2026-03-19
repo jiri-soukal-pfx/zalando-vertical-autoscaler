@@ -233,9 +233,12 @@ func addPostgresParametersPatch(patchData map[string]interface{}, pgParams map[s
 	}
 
 	spec := patchData["spec"].(map[string]interface{})
-	spec["postgresql"] = map[string]interface{}{
-		"parameters": params,
+	pg, ok := spec["postgresql"].(map[string]interface{})
+	if !ok {
+		pg = make(map[string]interface{})
+		spec["postgresql"] = pg
 	}
+	pg["parameters"] = params
 }
 
 // formatBytes formats an int64 byte count as a human-readable string.

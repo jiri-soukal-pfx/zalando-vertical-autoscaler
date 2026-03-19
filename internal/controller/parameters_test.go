@@ -145,6 +145,18 @@ func TestCalculatePostgresParameters_InvalidTemplate(t *testing.T) {
 	g.Expect(err.Error()).To(gomega.ContainSubstring("bad_param"))
 }
 
+func TestCalculatePostgresParameters_MissingKey(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	params := map[string]string{
+		"shared_buffers": `{{ div .memroy 1024 }}`,
+	}
+
+	_, err := CalculatePostgresParameters(params, 1024*1024*1024, 2)
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("shared_buffers"))
+}
+
 func TestCalculatePostgresParameters_TemplateFunctions(t *testing.T) {
 	g := gomega.NewWithT(t)
 
@@ -174,6 +186,18 @@ func TestCalculatePostgresParameters_ZeroCPU(t *testing.T) {
 	result, err := CalculatePostgresParameters(params, 1024*1024*1024, 0)
 	g.Expect(err).NotTo(gomega.HaveOccurred())
 	g.Expect(result["max_worker_processes"]).To(gomega.Equal("4"))
+}
+
+func TestCalculatePostgresParameters_DivisionByZero(t *testing.T) {
+	g := gomega.NewWithT(t)
+
+	params := map[string]string{
+		"bad_param": `{{ div .memory .cpu }}`,
+	}
+
+	_, err := CalculatePostgresParameters(params, 1024*1024*1024, 0)
+	g.Expect(err).To(gomega.HaveOccurred())
+	g.Expect(err.Error()).To(gomega.ContainSubstring("division by zero"))
 }
 
 func TestCalculatePostgresParameters_LargeValues(t *testing.T) {
