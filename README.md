@@ -27,7 +27,9 @@ VPA recommendation ──> clamp to [memoryMin, memoryMax]
                   no /          \ yes
                  wait        safety gates pass?
                               no /       \ yes
-                             skip    patch Zalando CR
+                             skip    evaluate PG parameter templates
+                                         │
+                                   patch Zalando CR (memory + CPU + PG params)
                                          │
                                    wait for cluster Running
                                          │
@@ -86,6 +88,13 @@ spec:
   safetyGates:
     # Only proceed if the Zalando cluster reports "Running"
     requireHealthyCluster: true
+
+  # Compute PG parameters from applied memory/CPU (optional)
+  postgresParameters:
+    shared_buffers: "{{ div (div .memory 3) 8192 }}"
+    work_mem: "{{ div (div .memory 256) 1024 }}"
+    max_parallel_workers_per_gather: "{{ div .cpu 2 }}"
+    max_connections: "300"  # static values pass through as-is
 
   postActions:
     # Restart a dependent workload after the PG cluster is ready
@@ -148,6 +157,7 @@ The last 10 runs are recorded in `.status.maintenanceHistory` with status, timin
 | `spec.postActions[].target.kind` | - | `Deployment`, `StatefulSet`, or `DaemonSet` |
 | `spec.postActions[].target.name` | - | Workload name |
 | `spec.postActions[].target.namespace` | policy namespace | Override target namespace |
+| `spec.postgresParameters` | - | Map of PG parameter names to Go template expressions (see below) |
 
 ## Cron syntax
 
@@ -169,6 +179,47 @@ Standard expressions work as expected:
 | `30 4 1 * *` | 1st of every month at 04:30 |
 
 All times are evaluated in **UTC**. See the full [gronx documentation](https://github.com/adhocore/gronx#cron-expression) for details.
+
+## PostgreSQL parameter templates
+
+The operator can automatically compute PostgreSQL parameters based on the applied memory and CPU values. Define `spec.postgresParameters` as a map of parameter names to Go template expressions:
+
+```yaml
+spec:
+  postgresParameters:
+    # Templates receive .memory (bytes) and .cpu (whole cores)
+    shared_buffers: "{{ div (div .memory 3) 8192 }}"
+    work_mem: "{{ div (div .memory 256) 1024 }}"
+    effective_cache_size: "{{ div (div (mul .memory 3) 4) 1024 }}kB"
+    max_worker_processes: "{{ max 24 (add (div .cpu 2) .cpu) }}"
+    max_parallel_workers_per_gather: "{{ div .cpu 2 }}"
+    # Static values pass through unchanged
+    max_connections: "300"
+```
+
+Evaluated parameters are patched into `spec.postgresql.parameters` on the Zalando CR alongside memory and CPU resources.
+
+### Template inputs
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `.memory` | int64 | Applied memory in bytes |
+| `.cpu` | int64 | Applied CPU in whole cores (ceiling-rounded, e.g. 1600m -> 2) |
+
+### Template functions
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `div` | `div a b` | Integer division (`a / b`). Returns an error if `b` is zero. |
+| `mul` | `mul a b` | Integer multiplication (`a * b`) |
+| `add` | `add a b` | Integer addition (`a + b`) |
+| `max` | `max a b` | Returns the larger of `a` and `b` |
+
+### Error handling
+
+- A typo in a variable name (e.g. `{{ .memroy }}`) produces a clear template error instead of silently rendering an empty value.
+- Division by zero in `div` returns a reconciliation error instead of crashing the controller.
+- Template errors fail the reconciliation gracefully and are reported via Kubernetes events.
 
 ## Design decisions
 

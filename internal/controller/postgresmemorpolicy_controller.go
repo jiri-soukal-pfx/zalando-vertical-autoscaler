@@ -111,7 +111,12 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 			CPU:    cpuQuantity,
 		}
 
-		if err := r.zalandoPatcher.PatchResources(ctx, policy, initialRec); err != nil {
+		pgParams, err := calculatePGParams(policy, memBytes, cpuCores(initialRec))
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("calculating PG parameters for bootstrap: %w", err)
+		}
+
+		if err := r.zalandoPatcher.PatchResources(ctx, policy, initialRec, pgParams); err != nil {
 			return ctrl.Result{}, fmt.Errorf("applying initial memory: %w", err)
 		}
 
@@ -248,6 +253,12 @@ func (r *PostgresMemoryPolicyReconciler) startMaintenance(
 		"maintenance started: applying memory=%s to cluster %q",
 		rec.Memory.String(), policy.Spec.TargetCluster)
 
+	// Calculate PG parameters from templates.
+	pgParams, err := calculatePGParams(policy, rec.Memory.Value(), cpuCores(rec))
+	if err != nil {
+		return r.failMaintenance(ctx, policy, fmt.Sprintf("calculating PG parameters: %v", err))
+	}
+
 	// Patch Zalando CR.
 	timeoutMinutes := policy.Spec.MaintenanceWindow.TimeoutMinutes
 	if timeoutMinutes == 0 {
@@ -257,7 +268,7 @@ func (r *PostgresMemoryPolicyReconciler) startMaintenance(
 	maintenanceCtx, cancel := context.WithTimeout(ctx, maintenanceTimeout)
 	defer cancel()
 
-	if err := r.zalandoPatcher.PatchResources(maintenanceCtx, policy, rec); err != nil {
+	if err := r.zalandoPatcher.PatchResources(maintenanceCtx, policy, rec, pgParams); err != nil {
 		return r.failMaintenance(ctx, policy, fmt.Sprintf("patching Zalando CR: %v", err))
 	}
 
@@ -322,6 +333,32 @@ func (r *PostgresMemoryPolicyReconciler) failMaintenance(
 	r.Recorder.Event(policy, "Warning", "MaintenanceFailed", reason)
 
 	return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+}
+
+// calculatePGParams evaluates PostgresParameters templates if defined on the policy.
+// Returns nil if no parameters are configured.
+func calculatePGParams(policy *policyv1alpha1.PostgresMemoryPolicy, memoryBytes int64, cpu int64) (map[string]string, error) {
+	if len(policy.Spec.PostgresParameters) == 0 {
+		return nil, nil
+	}
+	return CalculatePostgresParameters(policy.Spec.PostgresParameters, memoryBytes, cpu)
+}
+
+// cpuCores returns the CPU value from a VPA recommendation in whole cores.
+// Returns 0 if CPU is not set.
+func cpuCores(rec *VPARecommendation) int64 {
+	if rec.CPU == nil {
+		return 0
+	}
+	// MilliValue() returns milliCPU; divide by 1000 to get cores.
+	// Use ceiling to round up partial cores (e.g. 3200m → 4 cores),
+	// matching the helm chart's round_up_to_cores behavior.
+	millis := rec.CPU.MilliValue()
+	cores := millis / 1000
+	if millis%1000 > 0 {
+		cores++
+	}
+	return cores
 }
 
 // SetupWithManager registers the controller with the manager.

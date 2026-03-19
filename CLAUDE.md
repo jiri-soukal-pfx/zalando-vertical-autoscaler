@@ -32,6 +32,7 @@ maintenance window.
 │   ├── postgresmemorpolicy_controller.go   Main reconcile loop
 │   ├── vpa.go / vpa_test.go                VPA reader + clamping
 │   ├── zalando.go / zalando_test.go        Zalando CR patcher + change gates
+│   ├── parameters.go / parameters_test.go   PG parameter template engine
 │   ├── postactions.go / postactions_test.go RolloutRestart handler
 │   ├── cron.go / cron_test.go              Maintenance window evaluator
 │   ├── conditions.go / conditions_test.go  Condition/history helpers
@@ -182,6 +183,17 @@ worth keeping in mind when extending the operator:
 - If `spec.initialMemory` is set and the Zalando CR has no `spec.resources.requests.memory`,
   the operator applies `initialMemory` immediately (no window check, no change gates).
   CPU is derived at 10:1 ratio (1 GiB → 100m CPU). This is a one-time bootstrap.
+
+### PostgreSQL parameter templates (`spec.postgresParameters`)
+When defined, the operator evaluates Go template expressions and patches the
+results into `spec.postgresql.parameters` on the Zalando CR alongside memory/CPU.
+- Template inputs: `.memory` (bytes, int64) and `.cpu` (whole cores, int64)
+- Available functions: `div`, `mul`, `add`, `max` (all int64)
+- `div` returns an error on division by zero (instead of panicking)
+- Templates use `Option("missingkey=error")` — a typo like `{{ .memroy }}`
+  fails with a clear error rather than silently rendering `<no value>`
+- Values not starting with `{{` pass through as static strings
+- Implementation: `internal/controller/parameters.go`
 
 ### RolloutRestart readiness criteria
 - **Deployment**: `updatedReplicas == replicas && availableReplicas == replicas`
