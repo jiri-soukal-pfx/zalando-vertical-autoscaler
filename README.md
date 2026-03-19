@@ -15,7 +15,7 @@ Zalando's Postgres operator does not natively integrate with the Kubernetes Vert
 ## How it works
 
 ```
-VPA recommendation ──> clamp to [memoryMin, memoryMax]
+                    VPA recommendation
                             │
                       Zalando CR has no memory?
                        no /          \ yes (and initialMemory set)
@@ -77,6 +77,9 @@ spec:
   # limits = requests * overcommit (default: 1)
   overcommit: 1
 
+  # Add 20% headroom on top of VPA recommendation (default: 0)
+  memoryBuffer: 20
+
   maintenanceWindow:
     # Every Sunday at 03:00 UTC
     cron: "0 3 * * 0"
@@ -115,6 +118,22 @@ Before patching the Zalando CR, two change gates must **both** pass:
 
 If either gate blocks, the run is recorded as `Skipped` and the operator waits for the next window.
 
+## Memory buffer
+
+VPA recommendations can sometimes be too close to actual usage, leaving insufficient headroom for spikes. The `memoryBuffer` field adds a configurable percentage on top of the clamped VPA recommendation:
+
+```
+VPA recommends 20Gi → clamp to [4Gi, 64Gi] → 20Gi → apply 20% buffer → 24Gi applied
+```
+
+The buffered value is re-clamped to `memoryMax`, so the buffer can never push memory above the configured upper bound:
+
+```
+VPA recommends 60Gi → clamp to [4Gi, 64Gi] → 60Gi → apply 20% buffer → 72Gi → re-clamp → 64Gi applied
+```
+
+Set `memoryBuffer: 0` (the default) for no buffer. Valid range is 0–100.
+
 ## Observability
 
 Everything is visible through standard Kubernetes mechanisms:
@@ -149,6 +168,7 @@ The last 10 runs are recorded in `.status.maintenanceHistory` with status, timin
 | `spec.memoryMin` | *required* | Lower bound for memory |
 | `spec.memoryMax` | *required* | Upper bound for memory |
 | `spec.overcommit` | `1` | Memory limit multiplier (`limits = requests * overcommit`) |
+| `spec.memoryBuffer` | `0` | Percentage (0–100) added on top of VPA recommendation after clamping. Re-clamped to `memoryMax`. |
 | `spec.initialMemory` | - | Memory to apply when the Zalando CR has no resources set (bootstrap) |
 | `spec.maintenanceWindow.cron` | *required* | 5-field cron expression (UTC). Supports `L` (last), `#` (nth), `W` (weekday) |
 | `spec.maintenanceWindow.timeoutMinutes` | `60` | How long the window stays open |

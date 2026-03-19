@@ -58,8 +58,9 @@ func (r *VPAReader) ReadRecommendation(ctx context.Context, policy *policyv1alph
 	}
 
 	clampedMemory := clampQuantity(rec.Memory, policy.Spec.MemoryMin, policy.Spec.MemoryMax)
+	bufferedMemory := applyMemoryBuffer(clampedMemory, policy.Spec.MemoryBuffer, policy.Spec.MemoryMax)
 	return &VPARecommendation{
-		Memory: clampedMemory,
+		Memory: bufferedMemory,
 		CPU:    rec.CPU,
 	}, nil
 }
@@ -103,6 +104,21 @@ func extractContainerRecommendation(vpa *vpav1.VerticalPodAutoscaler, containerN
 		Reason:  policyv1alpha1.ReasonNoRecommendationYet,
 		Message: fmt.Sprintf("VPA %q has no recommendation for container %q", vpa.Name, containerName),
 	}
+}
+
+// applyMemoryBuffer increases the memory quantity by bufferPercent and re-clamps
+// to max so the buffer can never push memory above the configured upper bound.
+// A bufferPercent of 0 returns the original quantity unchanged.
+func applyMemoryBuffer(q resource.Quantity, bufferPercent float64, max resource.Quantity) resource.Quantity {
+	if bufferPercent <= 0 {
+		return q
+	}
+	bufferedBytes := int64(float64(q.Value()) * (1 + bufferPercent/100))
+	buffered := *resource.NewQuantity(bufferedBytes, resource.BinarySI)
+	if buffered.Cmp(max) > 0 {
+		return max.DeepCopy()
+	}
+	return buffered
 }
 
 // clampQuantity clamps q to [min, max].

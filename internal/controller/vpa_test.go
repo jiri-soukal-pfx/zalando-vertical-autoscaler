@@ -69,6 +69,71 @@ func TestClampQuantity(t *testing.T) {
 	}
 }
 
+func TestApplyMemoryBuffer(t *testing.T) {
+	tests := []struct {
+		name          string
+		q             string
+		bufferPercent float64
+		max           string
+		expected      string
+	}{
+		{
+			name:          "no buffer (0%)",
+			q:             "10Gi",
+			bufferPercent: 0,
+			max:           "64Gi",
+			expected:      "10Gi",
+		},
+		{
+			name:          "20% buffer",
+			q:             "10Gi",
+			bufferPercent: 20,
+			max:           "64Gi",
+			expected:      "12Gi",
+		},
+		{
+			name:          "50% buffer",
+			q:             "20Gi",
+			bufferPercent: 50,
+			max:           "64Gi",
+			expected:      "30Gi",
+		},
+		{
+			name:          "buffer capped at max",
+			q:             "60Gi",
+			bufferPercent: 20,
+			max:           "64Gi",
+			expected:      "64Gi",
+		},
+		{
+			name:          "negative buffer treated as no buffer",
+			q:             "10Gi",
+			bufferPercent: -5,
+			max:           "64Gi",
+			expected:      "10Gi",
+		},
+		{
+			name:          "100% buffer doubles memory",
+			q:             "16Gi",
+			bufferPercent: 100,
+			max:           "64Gi",
+			expected:      "32Gi",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q := resource.MustParse(tc.q)
+			max := resource.MustParse(tc.max)
+			result := applyMemoryBuffer(q, tc.bufferPercent, max)
+			expected := resource.MustParse(tc.expected)
+			if result.Cmp(expected) != 0 {
+				t.Errorf("applyMemoryBuffer(%s, %.0f%%, %s) = %s, want %s", tc.q, tc.bufferPercent, tc.max, result.String(), tc.expected)
+			}
+		})
+	}
+}
+
 func TestExtractContainerRecommendation_NoStatus(t *testing.T) {
 	vpa := &vpav1.VerticalPodAutoscaler{}
 	vpa.Name = "test-vpa"

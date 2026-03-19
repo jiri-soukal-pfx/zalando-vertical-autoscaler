@@ -788,7 +788,56 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		Expect(params["max_connections"]).To(Equal("300"))
 	})
 
-	// ── Scenario 13: InitialMemory with overcommit > 1 ──────────────────────
+	// ── Scenario 13: MemoryBuffer increases VPA recommendation ──────────────
+
+	It("applies memoryBuffer percentage on top of clamped VPA recommendation", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		// target = 20Gi (within min=8Gi, max=64Gi), current = 1Gi
+		// diff = large enough to pass all gates
+		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
+		policy.Spec.MemoryBuffer = 20 // +20%
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+		// 20Gi + 20% = 24Gi
+		Expect(updated.Status.MaintenanceHistory[0].AppliedMemory).To(Equal("24Gi"))
+		Expect(updated.Status.CurrentMemory).NotTo(BeNil())
+		Expect(updated.Status.CurrentMemory.String()).To(Equal("24Gi"))
+	})
+
+	It("caps memoryBuffer result at memoryMax", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		// target = 60Gi (within min=8Gi, max=64Gi), current = 1Gi
+		makeVPA(ctx, ns.Name, vpaName, "60Gi", 0)
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
+		policy.Spec.MemoryBuffer = 20 // 60Gi + 20% = 72Gi, but max = 64Gi
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+		// Capped at max: 64Gi
+		Expect(updated.Status.MaintenanceHistory[0].AppliedMemory).To(Equal("64Gi"))
+		Expect(updated.Status.CurrentMemory).NotTo(BeNil())
+		Expect(updated.Status.CurrentMemory.String()).To(Equal("64Gi"))
+	})
+
+	// ── Scenario 14: InitialMemory with overcommit > 1 ──────────────────────
 
 	It("applies initialMemory with overcommit factor for memory limits", func() {
 		vpaName := uniqueName("vpa")

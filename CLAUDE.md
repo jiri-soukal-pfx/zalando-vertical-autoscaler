@@ -10,7 +10,7 @@ maintenance window.
 
 - Watches `PostgresMemoryPolicy` CRs (`postgresmemorypolicies.pricefx.io/v1alpha1`)
 - Reads `.status.recommendation` from a VPA object (same namespace)
-- Clamps the recommendation to `[memoryMin, memoryMax]`
+- Clamps the recommendation to `[memoryMin, memoryMax]`, then applies `memoryBuffer` %
 - Evaluates a cron-based maintenance window before making any change
 - Applies memory (and optionally CPU) to a Zalando `postgresql.acid.zalan.do` CR
 - Waits for the Zalando cluster to become `Running`
@@ -174,6 +174,14 @@ worth keeping in mind when extending the operator:
 - Read `.target.memory` (not `upperBound` or `lowerBound`)
 - VPA looked up in **same namespace** as the `PostgresMemoryPolicy` CR
 - No recommendation → `ConditionVPARecommendationReady=False`, requeue after 5 min
+
+### Memory buffer (`spec.memoryBuffer`)
+When set to a non-zero percentage (0–100), the operator increases the clamped
+VPA memory recommendation by that percentage before applying it. The buffered
+value is re-clamped to `memoryMax` so it can never exceed the configured upper
+bound. Example: VPA recommends 20Gi, `memoryBuffer: 20` → 24Gi applied.
+This is useful for workloads that need headroom above what VPA recommends.
+Implementation: `applyMemoryBuffer()` in `internal/controller/vpa.go`.
 
 ### Zalando CR patch
 - Set `spec.resources.requests.memory = memoryTarget`

@@ -64,6 +64,16 @@ spec:
                 required:
                 - cron
                 type: object
+              memoryBuffer:
+                default: 0
+                description: "MemoryBuffer is a percentage added on top of the VPA
+                  memory recommendation after clamping to [memoryMin, memoryMax].
+                  For example, a value of 20 increases the recommended memory by
+                  20%. The buffered value is re-clamped to memoryMax so the buffer
+                  can never push memory above the configured upper bound."
+                maximum: 100
+                minimum: 0
+                type: number
               memoryMax:
                 anyOf:
                 - type: integer

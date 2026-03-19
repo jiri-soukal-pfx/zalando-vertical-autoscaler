@@ -45,6 +45,17 @@ type PostgresMemoryPolicySpec struct {
 	// +kubebuilder:validation:Minimum=1
 	Overcommit float64 `json:"overcommit,omitempty"`
 
+	// MemoryBuffer is a percentage added on top of the VPA memory recommendation
+	// after clamping to [memoryMin, memoryMax]. For example, a value of 20 increases
+	// the recommended memory by 20%. The buffered value is re-clamped to memoryMax
+	// so the buffer can never push memory above the configured upper bound.
+	// Defaults to 0 (no buffer).
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	MemoryBuffer float64 `json:"memoryBuffer,omitempty"`
+
 	// InitialMemory is the memory value applied to the Zalando CR when it has no
 	// spec.resources.requests.memory set. This bootstraps new clusters before VPA
 	// has produced a recommendation. Applied immediately, bypassing the maintenance
