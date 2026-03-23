@@ -111,10 +111,19 @@ spec:
 
 Before patching the Zalando CR, two change gates must **both** pass:
 
-| Gate | Threshold | Purpose |
-|------|-----------|---------|
+| Gate | Default | Purpose |
+|------|---------|--------|
 | Absolute diff | > 5 GiB | Ignore small absolute changes |
 | Relative diff | > 10% | Ignore small proportional changes |
+
+Both thresholds are configurable via `spec.safetyGates`:
+
+```yaml
+spec:
+  safetyGates:
+    absoluteThreshold: 2Gi   # override default 5Gi
+    relativeThreshold: 5     # override default 10%
+```
 
 If either gate blocks, the run is recorded as `Skipped` and the operator waits for the next window.
 
@@ -173,6 +182,8 @@ The last 10 runs are recorded in `.status.maintenanceHistory` with status, timin
 | `spec.maintenanceWindow.cron` | *required* | 5-field cron expression (UTC). Supports `L` (last), `#` (nth), `W` (weekday) |
 | `spec.maintenanceWindow.timeoutMinutes` | `60` | How long the window stays open |
 | `spec.safetyGates.requireHealthyCluster` | `true` | Require cluster status `Running` |
+| `spec.safetyGates.absoluteThreshold` | `5Gi` | Minimum absolute memory diff to proceed |
+| `spec.safetyGates.relativeThreshold` | `10` | Minimum relative memory diff (%) to proceed |
 | `spec.postActions[].action` | - | `RolloutRestart` |
 | `spec.postActions[].target.kind` | - | `Deployment`, `StatefulSet`, or `DaemonSet` |
 | `spec.postActions[].target.name` | - | Workload name |

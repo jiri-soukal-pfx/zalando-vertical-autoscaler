@@ -202,7 +202,7 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 	// Step 5: Change gates (reuse currentMemory from bootstrap check above).
 	if currentMemory != nil {
 		policy.Status.CurrentMemory = currentMemory
-		gateResult := EvaluateChangeGates(*currentMemory, memTarget)
+		gateResult := EvaluateChangeGates(*currentMemory, memTarget, &policy.Spec.SafetyGates)
 		if gateResult.Blocked {
 			logger.Info("change gate blocked maintenance", "reason", gateResult.Reason, "message", gateResult.Message)
 			r.Recorder.Event(policy, "Normal", gateResult.Reason, gateResult.Message)

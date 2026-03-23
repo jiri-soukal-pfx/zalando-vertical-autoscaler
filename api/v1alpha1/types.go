@@ -109,6 +109,18 @@ type SafetyGatesSpec struct {
 	// MinReadyReplicas is the minimum number of ready replicas required before proceeding.
 	// +kubebuilder:default=1
 	MinReadyReplicas int32 `json:"minReadyReplicas,omitempty"`
+
+	// AbsoluteThreshold is the minimum absolute memory change required to proceed
+	// with maintenance. Defaults to 5Gi if not set.
+	// +optional
+	AbsoluteThreshold *resource.Quantity `json:"absoluteThreshold,omitempty"`
+
+	// RelativeThreshold is the minimum relative memory change (as a percentage)
+	// required to proceed with maintenance. Defaults to 10 (meaning 10%) if not set.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	RelativeThreshold *int32 `json:"relativeThreshold,omitempty"`
 }
 
 // PostActionSpec defines a single action to execute after a successful maintenance run.
