@@ -52,8 +52,8 @@ func TestEvaluateChangeGates(t *testing.T) {
 		},
 		{
 			name:    "custom absolute threshold - lower threshold allows smaller changes",
-			current: "32Gi",
-			target:  "38Gi", // +6Gi, +18.75% — blocked with default 5Gi absolute (<=), passes with 1Gi; relative 18.75% > 10% default
+			current: "16Gi",
+			target:  "20Gi", // +4Gi, +25% — blocked with default 5Gi absolute (diff < 5Gi), passes with 1Gi; relative 25% > 10% default
 			gates: &policyv1alpha1.SafetyGatesSpec{
 				AbsoluteThreshold: quantityPtr("1Gi"),
 			},
