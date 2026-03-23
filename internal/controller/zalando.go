@@ -77,7 +77,7 @@ func EvaluateChangeGates(current, target resource.Quantity, gates *policyv1alpha
 		return ChangeGateResult{
 			Blocked: true,
 			Reason:  policyv1alpha1.ReasonChangeGateAbsoluteDiff,
-			Message: fmt.Sprintf("absolute memory diff %s does not exceed threshold of %s", formatBytes(absDiff), formatBytes(absThreshold)),
+			Message: fmt.Sprintf("absolute memory diff %s does not exceed threshold of %s", formatBytes(absDiff), resource.NewQuantity(absThreshold, resource.BinarySI).String()),
 		}
 	}
 
