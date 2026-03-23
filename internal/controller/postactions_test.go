@@ -144,7 +144,9 @@ func TestTriggerPostActions_AppliesAnnotation(t *testing.T) {
 
 	// Verify annotation was applied.
 	updated := &appsv1.Deployment{}
-	_ = c.Get(context.Background(), client.ObjectKeyFromObject(dep), updated)
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(dep), updated); err != nil {
+		t.Fatalf("failed to get updated deployment: %v", err)
+	}
 	if _, ok := updated.Spec.Template.Annotations[rolloutRestartAnnotation]; !ok {
 		t.Fatal("expected restart annotation to be set")
 	}
