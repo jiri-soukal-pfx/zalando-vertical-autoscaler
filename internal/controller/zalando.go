@@ -23,13 +23,13 @@ const (
 	zalandoVersion = "v1"
 	// zalandoKind is the kind of the Zalando postgres CR.
 	zalandoKind = "postgresql"
-	// changeGateAbsoluteThreshold is the minimum absolute memory change (in bytes)
-	// required to proceed with maintenance.
-	changeGateAbsoluteThreshold = 5 * 1024 * 1024 * 1024 // 5Gi
+	// defaultChangeGateAbsoluteThreshold is the minimum absolute memory change (in bytes)
+	// required to proceed with maintenance when no custom threshold is configured.
+	defaultChangeGateAbsoluteThreshold = 5 * 1024 * 1024 * 1024 // 5Gi
 
-	// changeGateRelativeThreshold is the minimum relative memory change (as a fraction)
-	// required to proceed with maintenance.
-	changeGateRelativeThreshold = 0.10 // 10%
+	// defaultChangeGateRelativeThreshold is the minimum relative memory change (as a fraction)
+	// required to proceed with maintenance when no custom threshold is configured.
+	defaultChangeGateRelativeThreshold = 0.10 // 10%
 )
 
 // ZalandoPatcher patches Zalando postgresql CRs with new memory/CPU values.
@@ -55,16 +55,29 @@ type ChangeGateResult struct {
 // EvaluateChangeGates checks if the difference between current and target memory is
 // large enough to justify a maintenance run. Both the absolute and relative thresholds
 // must be met. If either is not met, the gate blocks.
-func EvaluateChangeGates(current, target resource.Quantity) ChangeGateResult {
+// Custom thresholds from SafetyGatesSpec are used when provided; otherwise defaults apply.
+func EvaluateChangeGates(current, target resource.Quantity, gates *policyv1alpha1.SafetyGatesSpec) ChangeGateResult {
+	absThreshold := int64(defaultChangeGateAbsoluteThreshold)
+	relThreshold := defaultChangeGateRelativeThreshold
+
+	if gates != nil {
+		if gates.AbsoluteThreshold != nil {
+			absThreshold = gates.AbsoluteThreshold.Value()
+		}
+		if gates.RelativeThreshold != nil {
+			relThreshold = float64(*gates.RelativeThreshold) / 100.0
+		}
+	}
+
 	currentBytes := current.Value()
 	targetBytes := target.Value()
 
 	absDiff := int64(math.Abs(float64(targetBytes - currentBytes)))
-	if absDiff <= changeGateAbsoluteThreshold {
+	if absDiff <= absThreshold {
 		return ChangeGateResult{
 			Blocked: true,
 			Reason:  policyv1alpha1.ReasonChangeGateAbsoluteDiff,
-			Message: fmt.Sprintf("absolute memory diff %s does not exceed threshold of 5Gi", formatBytes(absDiff)),
+			Message: fmt.Sprintf("absolute memory diff %s does not exceed threshold of %s", formatBytes(absDiff), resource.NewQuantity(absThreshold, resource.BinarySI).String()),
 		}
 	}
 
@@ -72,11 +85,11 @@ func EvaluateChangeGates(current, target resource.Quantity) ChangeGateResult {
 		return ChangeGateResult{Blocked: false}
 	}
 	relativeDiff := math.Abs(float64(targetBytes-currentBytes)) / float64(currentBytes)
-	if relativeDiff <= changeGateRelativeThreshold {
+	if relativeDiff <= relThreshold {
 		return ChangeGateResult{
 			Blocked: true,
 			Reason:  policyv1alpha1.ReasonChangeGateRelativeDiff,
-			Message: fmt.Sprintf("relative memory diff %.1f%% does not exceed threshold of 10%%", relativeDiff*100),
+			Message: fmt.Sprintf("relative memory diff %.1f%% does not exceed threshold of %.0f%%", relativeDiff*100, relThreshold*100),
 		}
 	}
 

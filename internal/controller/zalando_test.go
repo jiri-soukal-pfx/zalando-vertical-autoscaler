@@ -13,6 +13,7 @@ func TestEvaluateChangeGates(t *testing.T) {
 		name        string
 		current     string
 		target      string
+		gates       *policyv1alpha1.SafetyGatesSpec
 		wantBlocked bool
 		wantReason  string
 	}{
@@ -49,13 +50,61 @@ func TestEvaluateChangeGates(t *testing.T) {
 			target:      "32Gi", // -16Gi, -33%
 			wantBlocked: false,
 		},
+		{
+			name:    "custom absolute threshold - lower threshold allows smaller changes",
+			current: "16Gi",
+			target:  "20Gi", // +4Gi, +25% — blocked with default 5Gi absolute (diff < 5Gi), passes with 1Gi; relative 25% > 10% default
+			gates: &policyv1alpha1.SafetyGatesSpec{
+				AbsoluteThreshold: quantityPtr("1Gi"),
+			},
+			wantBlocked: false,
+		},
+		{
+			name:    "custom absolute threshold - higher threshold blocks larger changes",
+			current: "32Gi",
+			target:  "48Gi", // +16Gi — passes with default 5Gi, blocked with 20Gi threshold
+			gates: &policyv1alpha1.SafetyGatesSpec{
+				AbsoluteThreshold: quantityPtr("20Gi"),
+			},
+			wantBlocked: true,
+			wantReason:  policyv1alpha1.ReasonChangeGateAbsoluteDiff,
+		},
+		{
+			name:    "custom relative threshold - lower threshold allows smaller changes",
+			current: "100Gi",
+			target:  "106Gi", // +6% — blocked with default 10%, passes with 5%
+			gates: &policyv1alpha1.SafetyGatesSpec{
+				RelativeThreshold: int32Ptr(5),
+			},
+			wantBlocked: false,
+		},
+		{
+			name:    "custom relative threshold - higher threshold blocks larger changes",
+			current: "32Gi",
+			target:  "48Gi", // +50% — passes with default 10%, blocked with 60%
+			gates: &policyv1alpha1.SafetyGatesSpec{
+				RelativeThreshold: int32Ptr(60),
+			},
+			wantBlocked: true,
+			wantReason:  policyv1alpha1.ReasonChangeGateRelativeDiff,
+		},
+		{
+			name:    "both custom thresholds - both pass",
+			current: "32Gi",
+			target:  "34Gi", // +2Gi, +6.25%
+			gates: &policyv1alpha1.SafetyGatesSpec{
+				AbsoluteThreshold: quantityPtr("1Gi"),
+				RelativeThreshold: int32Ptr(5),
+			},
+			wantBlocked: false,
+		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			current := resource.MustParse(tc.current)
 			target := resource.MustParse(tc.target)
-			result := EvaluateChangeGates(current, target)
+			result := EvaluateChangeGates(current, target, tc.gates)
 			if result.Blocked != tc.wantBlocked {
 				t.Errorf("Blocked=%v, want %v (reason=%s, message=%s)", result.Blocked, tc.wantBlocked, result.Reason, result.Message)
 			}
@@ -64,6 +113,15 @@ func TestEvaluateChangeGates(t *testing.T) {
 			}
 		})
 	}
+}
+
+func quantityPtr(s string) *resource.Quantity {
+	q := resource.MustParse(s)
+	return &q
+}
+
+func int32Ptr(v int32) *int32 {
+	return &v
 }
 
 func TestBuildMemoryPatch(t *testing.T) {

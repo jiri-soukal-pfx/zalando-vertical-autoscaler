@@ -152,11 +152,28 @@ spec:
               safetyGates:
                 description: SafetyGates are evaluated before starting maintenance.
                 properties:
+                  absoluteThreshold:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: AbsoluteThreshold is the minimum absolute memory
+                      change required to proceed with maintenance. Defaults to 5Gi
+                      if not set.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
                   minReadyReplicas:
                     default: 1
                     description: MinReadyReplicas is the minimum number of ready replicas
                       required before proceeding.
                     format: int32
+                    type: integer
+                  relativeThreshold:
+                    description: RelativeThreshold is the minimum relative memory
+                      change (as a percentage) required to proceed with maintenance.
+                      Defaults to 10 (meaning 10%) if not set.
+                    format: int32
+                    maximum: 100
+                    minimum: 0
                     type: integer
                   requireHealthyCluster:
                     default: true

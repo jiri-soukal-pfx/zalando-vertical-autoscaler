@@ -82,8 +82,8 @@ patch. This avoids importing the Zalando operator's Go types. The status field
 
 ### Change gates (both must pass to proceed)
 Before patching the Zalando CR the reconciler checks:
-1. **Absolute diff** > 5 GiB
-2. **Relative diff** > 10%
+1. **Absolute diff** > threshold (default 5 GiB, configurable via `spec.safetyGates.absoluteThreshold`)
+2. **Relative diff** > threshold (default 10%, configurable via `spec.safetyGates.relativeThreshold`)
 
 If either gate blocks, a `Skipped` maintenance record is written and the
 reconciler requeues until the next window.
