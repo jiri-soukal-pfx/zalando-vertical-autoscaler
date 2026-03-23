@@ -407,7 +407,7 @@ func (r *PostgresMemoryPolicyReconciler) completeMaintenance(
 		memTarget.String(), policy.Spec.TargetCluster)
 	logger.Info("maintenance completed successfully", "appliedMemory", memTarget.String())
 
-	requeueAfter := RequeueAfter(windowResult, time.Now())
+	requeueAfter := RequeueAfter(windowResult, now)
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
