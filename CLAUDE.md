@@ -86,7 +86,26 @@ Before patching the Zalando CR the reconciler checks:
 2. **Relative diff** > threshold (default 10%, configurable via `spec.safetyGates.relativeThreshold`)
 
 If either gate blocks, a `Skipped` maintenance record is written and the
-reconciler requeues until the next window.
+reconciler requeues until the next window. Only ONE Zalando CR patch is allowed
+per maintenance window — after a successful maintenance, further changes are
+deferred to the next window even if VPA recommendations change mid-window.
+
+### Non-blocking reconciler with one update per window
+The reconciler uses a non-blocking state machine for maintenance. Instead of
+blocking the reconcile goroutine waiting for cluster health and post-action
+completion, it:
+1. Patches the Zalando CR and sets `Phase=PatchApplied` → returns immediately
+2. On subsequent reconciles, polls cluster health → when Running, triggers
+   post-actions and sets `Phase=PostActionsTriggered`
+3. Polls post-action rollout readiness → when done, marks `Completed`
+
+All state is persisted in the CR status (`MaintenanceRecord.Phase`), so an
+operator restart safely resumes from the last persisted phase.
+
+If the window expires while maintenance is in progress, the reconciler performs
+a single grace check: if the cluster is healthy and post-actions are complete,
+it marks the maintenance as Completed. Otherwise it marks it Failed. No revert
+is performed — a revert would cause another restart, doubling disruption.
 
 ### Maintenance window model
 A window is **open** if `now >= prevFire && now < prevFire + timeoutMinutes`.

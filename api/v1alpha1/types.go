@@ -189,6 +189,11 @@ type MaintenanceRecord struct {
 	// Status is the terminal or intermediate status of the run.
 	Status MaintenanceStatus `json:"status"`
 
+	// Phase tracks the current step within an InProgress maintenance run.
+	// Empty for terminal states (Completed, Failed, Skipped).
+	// +optional
+	Phase MaintenancePhase `json:"phase,omitempty"`
+
 	// Reason provides a human-readable explanation for the status.
 	// +optional
 	Reason string `json:"reason,omitempty"`
@@ -201,6 +206,20 @@ type MaintenanceRecord struct {
 	// +optional
 	AppliedMemory string `json:"appliedMemory,omitempty"`
 }
+
+// MaintenancePhase tracks progress within an InProgress maintenance run.
+// +kubebuilder:validation:Enum=PatchApplied;PostActionsTriggered
+type MaintenancePhase string
+
+const (
+	// MaintenancePhasePatchApplied means the Zalando CR has been patched and the
+	// reconciler is waiting for the cluster to become Running.
+	MaintenancePhasePatchApplied MaintenancePhase = "PatchApplied"
+
+	// MaintenancePhasePostActionsTriggered means post-actions (e.g., rollout restarts)
+	// have been triggered and the reconciler is waiting for them to complete.
+	MaintenancePhasePostActionsTriggered MaintenancePhase = "PostActionsTriggered"
+)
 
 // MaintenanceStatus describes the phase of a maintenance run.
 // +kubebuilder:validation:Enum=Pending;InProgress;Completed;Failed;Skipped

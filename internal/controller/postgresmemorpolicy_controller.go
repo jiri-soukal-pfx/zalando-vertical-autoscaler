@@ -17,11 +17,6 @@ import (
 	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
 )
 
-const (
-	// maintenanceTimeoutBuffer is extra time added to the configured timeout
-	// before the operator's context is cancelled.
-	maintenanceTimeoutBuffer = 30 * time.Second
-)
 
 // PostgresMemoryPolicyReconciler reconciles PostgresMemoryPolicy objects.
 type PostgresMemoryPolicyReconciler struct {
@@ -163,14 +158,24 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 		inProgressRec := findInProgressRecord(policy)
 		if inProgressRec != nil {
 			if !windowResult.InWindow {
-				// Window expired while maintenance was still in progress — fail it.
+				// Window expired — check for grace period success.
 				logger.Info("maintenance window expired while maintenance in progress")
-				return r.failMaintenance(ctx, policy, policyv1alpha1.ReasonMaintenanceTimeout)
+				return r.handleWindowExpired(ctx, policy, inProgressRec)
 			}
-			// Continue monitoring.
+			// Still in window — advance phases.
 			logger.Info("maintenance already in progress, monitoring")
-			return r.monitorMaintenance(ctx, policy, windowResult, now)
+			return r.monitorMaintenance(ctx, policy, inProgressRec, windowResult, now)
 		}
+		// Stale condition with no matching record — clear it.
+		SetCondition(policy, policyv1alpha1.ConditionMaintenanceInProgress,
+			metav1.ConditionFalse, "StaleConditionCleared", "no in-progress record found")
+	}
+
+	// Step 3b: One-update-per-window guard.
+	if windowResult.InWindow && hasCompletedMaintenanceInWindow(policy, windowResult.NextOpen, windowResult.WindowEnd) {
+		logger.V(1).Info("maintenance already completed in this window, skipping")
+		requeueAfter := RequeueAfter(windowResult, now)
+		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 
 	if !windowResult.InWindow {
@@ -222,7 +227,7 @@ func (r *PostgresMemoryPolicyReconciler) reconcilePolicy(ctx context.Context, po
 	return r.startMaintenance(ctx, policy, rec, currentMemory, windowResult, now)
 }
 
-// startMaintenance begins a maintenance run.
+// startMaintenance begins a maintenance run (non-blocking).
 func (r *PostgresMemoryPolicyReconciler) startMaintenance(
 	ctx context.Context,
 	policy *policyv1alpha1.PostgresMemoryPolicy,
@@ -239,12 +244,24 @@ func (r *PostgresMemoryPolicyReconciler) startMaintenance(
 		prevMemoryStr = currentMemory.String()
 	}
 
-	// Mark maintenance as in progress.
+	// Calculate PG parameters from templates.
+	pgParams, err := calculatePGParams(policy, rec.Memory.Value(), cpuCores(rec))
+	if err != nil {
+		return r.failMaintenance(ctx, policy, fmt.Sprintf("calculating PG parameters: %v", err))
+	}
+
+	// Patch Zalando CR.
+	if err := r.zalandoPatcher.PatchResources(ctx, policy, rec, pgParams); err != nil {
+		return r.failMaintenance(ctx, policy, fmt.Sprintf("patching Zalando CR: %v", err))
+	}
+
+	// Mark maintenance as in progress with PatchApplied phase.
 	SetCondition(policy, policyv1alpha1.ConditionMaintenanceInProgress,
 		metav1.ConditionTrue, "MaintenanceStarted", "maintenance run has started")
 	addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
 		StartedAt:      metav1.Now(),
 		Status:         policyv1alpha1.MaintenanceStatusInProgress,
+		Phase:          policyv1alpha1.MaintenancePhasePatchApplied,
 		PreviousMemory: prevMemoryStr,
 		AppliedMemory:  rec.Memory.String(),
 	})
@@ -253,37 +270,125 @@ func (r *PostgresMemoryPolicyReconciler) startMaintenance(
 		"maintenance started: applying memory=%s to cluster %q",
 		rec.Memory.String(), policy.Spec.TargetCluster)
 
-	// Calculate PG parameters from templates.
-	pgParams, err := calculatePGParams(policy, rec.Memory.Value(), cpuCores(rec))
+	// Return immediately — do NOT block waiting for cluster ready.
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// monitorMaintenance advances the non-blocking state machine for an in-progress maintenance.
+func (r *PostgresMemoryPolicyReconciler) monitorMaintenance(
+	ctx context.Context,
+	policy *policyv1alpha1.PostgresMemoryPolicy,
+	record *policyv1alpha1.MaintenanceRecord,
+	windowResult WindowResult,
+	now time.Time,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	switch record.Phase {
+	case policyv1alpha1.MaintenancePhasePatchApplied:
+		// Phase 1: Waiting for cluster to become Running.
+		healthy, err := r.zalandoPatcher.IsClusterHealthy(ctx, policy.Namespace, policy.Spec.TargetCluster)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("checking cluster health: %w", err)
+		}
+		if !healthy {
+			logger.V(1).Info("cluster not yet healthy, waiting")
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
+		// Cluster is healthy — trigger post-actions or complete.
+		logger.Info("cluster is healthy, triggering post-actions")
+		if len(policy.Spec.PostActions) == 0 {
+			return r.completeMaintenance(ctx, policy, record, windowResult, now)
+		}
+
+		if err := r.postActions.TriggerPostActions(ctx, policy); err != nil {
+			return r.failMaintenance(ctx, policy, fmt.Sprintf("triggering post-actions: %v", err))
+		}
+
+		// Advance phase.
+		record.Phase = policyv1alpha1.MaintenancePhasePostActionsTriggered
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+
+	case policyv1alpha1.MaintenancePhasePostActionsTriggered:
+		// Phase 2: Waiting for post-action rollouts to complete.
+		done, err := r.postActions.ArePostActionsComplete(ctx, policy)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("checking post-action completion: %w", err)
+		}
+		if !done {
+			logger.V(1).Info("post-actions not yet complete, waiting")
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+
+		return r.completeMaintenance(ctx, policy, record, windowResult, now)
+
+	default:
+		return r.failMaintenance(ctx, policy, fmt.Sprintf("unknown maintenance phase %q", record.Phase))
+	}
+}
+
+// handleWindowExpired performs a grace-period check when the window expires during maintenance.
+func (r *PostgresMemoryPolicyReconciler) handleWindowExpired(
+	ctx context.Context,
+	policy *policyv1alpha1.PostgresMemoryPolicy,
+	record *policyv1alpha1.MaintenanceRecord,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	// Grace check: if everything is healthy and done, count it as success.
+	healthy, err := r.zalandoPatcher.IsClusterHealthy(ctx, policy.Namespace, policy.Spec.TargetCluster)
 	if err != nil {
-		return r.failMaintenance(ctx, policy, fmt.Sprintf("calculating PG parameters: %v", err))
+		logger.Error(err, "error checking cluster health after window expired")
+		return r.failMaintenance(ctx, policy, policyv1alpha1.ReasonMaintenanceTimeout)
 	}
 
-	// Patch Zalando CR.
-	timeoutMinutes := policy.Spec.MaintenanceWindow.TimeoutMinutes
-	if timeoutMinutes == 0 {
-		timeoutMinutes = 60
-	}
-	maintenanceTimeout := time.Duration(timeoutMinutes)*time.Minute + maintenanceTimeoutBuffer
-	maintenanceCtx, cancel := context.WithTimeout(ctx, maintenanceTimeout)
-	defer cancel()
+	if healthy {
+		postActionsDone := true
+		if record.Phase == policyv1alpha1.MaintenancePhasePostActionsTriggered {
+			postActionsDone, err = r.postActions.ArePostActionsComplete(ctx, policy)
+			if err != nil {
+				logger.Error(err, "error checking post-actions after window expired")
+				return r.failMaintenance(ctx, policy, policyv1alpha1.ReasonMaintenanceTimeout)
+			}
+		} else if record.Phase == policyv1alpha1.MaintenancePhasePatchApplied {
+			// Cluster is healthy but post-actions were never triggered.
+			if len(policy.Spec.PostActions) > 0 {
+				postActionsDone = false
+			}
+		}
 
-	if err := r.zalandoPatcher.PatchResources(maintenanceCtx, policy, rec, pgParams); err != nil {
-		return r.failMaintenance(ctx, policy, fmt.Sprintf("patching Zalando CR: %v", err))
+		if postActionsDone {
+			logger.Info("maintenance completed after window expired (grace period)")
+			memTarget := resource.MustParse(record.AppliedMemory)
+			policy.Status.CurrentMemory = &memTarget
+			markRecordCompleted(policy, policyv1alpha1.MaintenanceStatusCompleted, "completed after window expired")
+			SetCondition(policy, policyv1alpha1.ConditionMaintenanceInProgress,
+				metav1.ConditionFalse, "MaintenanceCompleted", "maintenance completed (grace period)")
+			SetCondition(policy, policyv1alpha1.ConditionLastMaintenanceFailed,
+				metav1.ConditionFalse, "MaintenanceSucceeded", "last maintenance run succeeded")
+			r.Recorder.Event(policy, "Normal", "MaintenanceCompleted",
+				"maintenance completed after window expired (grace period)")
+			return ctrl.Result{RequeueAfter: 5 * time.Minute}, nil
+		}
 	}
 
-	// Wait for cluster to become ready.
-	if err := r.zalandoPatcher.WaitForClusterReady(maintenanceCtx, policy.Namespace, policy.Spec.TargetCluster); err != nil {
-		return r.failMaintenance(ctx, policy, fmt.Sprintf("waiting for cluster ready: %v", err))
-	}
+	// Not healthy or post-actions incomplete — fail (no revert).
+	logger.Info("maintenance window expired, cluster not in desired state")
+	return r.failMaintenance(ctx, policy, policyv1alpha1.ReasonMaintenanceTimeout)
+}
 
-	// Execute post-actions.
-	if err := r.postActions.Execute(ctx, policy); err != nil {
-		return r.failMaintenance(ctx, policy, fmt.Sprintf("executing post-actions: %v", err))
-	}
+// completeMaintenance marks a maintenance run as successfully completed.
+func (r *PostgresMemoryPolicyReconciler) completeMaintenance(
+	ctx context.Context,
+	policy *policyv1alpha1.PostgresMemoryPolicy,
+	record *policyv1alpha1.MaintenanceRecord,
+	windowResult WindowResult,
+	now time.Time,
+) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
 
-	// Maintenance completed successfully.
-	memTarget := rec.Memory
+	memTarget := resource.MustParse(record.AppliedMemory)
 	policy.Status.CurrentMemory = &memTarget
 	markRecordCompleted(policy, policyv1alpha1.MaintenanceStatusCompleted, "")
 	SetCondition(policy, policyv1alpha1.ConditionMaintenanceInProgress,
@@ -293,27 +398,11 @@ func (r *PostgresMemoryPolicyReconciler) startMaintenance(
 
 	r.Recorder.Eventf(policy, "Normal", "MaintenanceCompleted",
 		"maintenance completed: applied memory=%s to cluster %q",
-		rec.Memory.String(), policy.Spec.TargetCluster)
+		memTarget.String(), policy.Spec.TargetCluster)
+	logger.Info("maintenance completed successfully", "appliedMemory", memTarget.String())
 
-	logger.Info("maintenance completed successfully", "appliedMemory", rec.Memory.String())
 	requeueAfter := RequeueAfter(windowResult, time.Now())
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
-}
-
-// monitorMaintenance checks the status of an in-progress maintenance run.
-func (r *PostgresMemoryPolicyReconciler) monitorMaintenance(
-	ctx context.Context,
-	policy *policyv1alpha1.PostgresMemoryPolicy,
-	windowResult WindowResult,
-	now time.Time,
-) (ctrl.Result, error) {
-	// If we're still within the window, just requeue quickly to check again.
-	if windowResult.InWindow && windowResult.WindowEnd.After(now) {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-
-	// Window has expired while maintenance was in progress — mark as failed.
-	return r.failMaintenance(ctx, policy, policyv1alpha1.ReasonMaintenanceTimeout)
 }
 
 // failMaintenance records a failed maintenance run and sets the appropriate conditions.
