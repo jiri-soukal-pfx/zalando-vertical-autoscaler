@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"time"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
@@ -74,6 +76,20 @@ func findInProgressRecord(policy *policyv1alpha1.PostgresMemoryPolicy) *policyv1
 		}
 	}
 	return nil
+}
+
+// hasCompletedMaintenanceInWindow returns true if any Completed maintenance record
+// in the history has a StartedAt time that falls within the given window bounds.
+// windowStart is inclusive, windowEnd is exclusive.
+func hasCompletedMaintenanceInWindow(policy *policyv1alpha1.PostgresMemoryPolicy, windowStart, windowEnd time.Time) bool {
+	for _, rec := range policy.Status.MaintenanceHistory {
+		if rec.Status == policyv1alpha1.MaintenanceStatusCompleted &&
+			!rec.StartedAt.Time.Before(windowStart) &&
+			rec.StartedAt.Time.Before(windowEnd) {
+			return true
+		}
+	}
+	return false
 }
 
 // markRecordCompleted marks the in-progress record as completed with the given status.

@@ -186,6 +186,17 @@ func uniqueName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, nameCounter)
 }
 
+// setZalandoClusterStatus updates the status of a Zalando postgresql CR.
+func setZalandoClusterStatus(ctx context.Context, namespace, name, statusValue string) {
+	pg := &unstructured.Unstructured{}
+	pg.SetGroupVersionKind(zalandoGVK)
+	Expect(k8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, pg)).To(Succeed())
+	pg.Object["status"] = map[string]interface{}{
+		"PostgresClusterStatus": statusValue,
+	}
+	Expect(k8sClient.Status().Update(ctx, pg)).To(Succeed())
+}
+
 // makeZalandoClusterNoResources creates a Zalando postgresql CR with no
 // spec.resources block and sets its status.PostgresClusterStatus to statusValue.
 func makeZalandoClusterNoResources(ctx context.Context, namespace, name, statusValue string) *unstructured.Unstructured {
@@ -366,7 +377,7 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 
 	// ── Scenario 6: Inside window, healthy cluster – happy path ──────────────
 
-	It("completes maintenance and updates status.currentMemory when all gates pass", func() {
+	It("completes maintenance across multiple reconcile cycles when all gates pass", func() {
 		vpaName := uniqueName("vpa")
 		pgName := uniqueName("pg")
 		// target = 20Gi (within min=8Gi, max=64Gi), current = 1Gi
@@ -376,13 +387,22 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 
 		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
 
+		// Reconcile 1: patches Zalando CR, sets Phase=PatchApplied.
 		result, err := reconcilePolicy(ctx, policy)
-
 		Expect(err).NotTo(HaveOccurred())
-		// Requeue until next window, which is soon (every minute cron).
-		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusInProgress))
+		Expect(updated.Status.MaintenanceHistory[0].Phase).To(Equal(policyv1alpha1.MaintenancePhasePatchApplied))
+
+		// Reconcile 2: cluster is already Running, no post-actions → completes.
+		result, err = reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+		updated = getPolicy(ctx, policy)
 		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
 		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
 		Expect(updated.Status.MaintenanceHistory[0].AppliedMemory).To(Equal("20Gi"))
@@ -400,7 +420,7 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 
 	// ── Scenario 7: Post-actions succeed (RolloutRestart) ────────────────────
 
-	It("completes maintenance and applies RolloutRestart to the target Deployment", func() {
+	It("completes maintenance with RolloutRestart across multiple reconcile cycles", func() {
 		vpaName := uniqueName("vpa")
 		pgName := uniqueName("pg")
 		depName := uniqueName("app")
@@ -415,24 +435,37 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 				Target: policyv1alpha1.ActionTargetRef{
 					Kind: "Deployment",
 					Name: depName,
-					// Namespace intentionally omitted — should default to policy.Namespace.
 				},
 			},
 		}
 		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
 
-		_, err := reconcilePolicy(ctx, policy)
-
+		// Reconcile 1: patches Zalando CR, Phase=PatchApplied.
+		result, err := reconcilePolicy(ctx, policy)
 		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+		// Reconcile 2: cluster Running → triggers post-actions, Phase=PostActionsTriggered.
+		result, err = reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 		updated := getPolicy(ctx, policy)
 		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
-		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+		Expect(updated.Status.MaintenanceHistory[0].Phase).To(Equal(policyv1alpha1.MaintenancePhasePostActionsTriggered))
 
 		// Verify the rollout-restart annotation was applied to the Deployment.
 		dep := &appsv1.Deployment{}
 		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: depName, Namespace: ns.Name}, dep)).To(Succeed())
 		Expect(dep.Spec.Template.Annotations).To(HaveKey("kubectl.kubernetes.io/restartedAt"))
+
+		// Reconcile 3: post-actions complete (0 replicas → immediately ready) → Completed.
+		_, err = reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated = getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
 	})
 
 	// ── Scenario 8a: Overlapping maintenance run – window still open ──────────
@@ -441,12 +474,12 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		vpaName := uniqueName("vpa")
 		pgName := uniqueName("pg")
 		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
-		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+		// Cluster is NOT yet healthy — should stay in PatchApplied phase.
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Updating")
 
 		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
 
-		// Simulate a previous reconcile that started maintenance by pre-setting the
-		// InProgress condition and a corresponding history record.
+		// Simulate a previous reconcile that started maintenance.
 		policyLatest := getPolicy(ctx, policy)
 		policyLatest.Status.Conditions = []metav1.Condition{
 			{
@@ -459,8 +492,10 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		}
 		policyLatest.Status.MaintenanceHistory = []policyv1alpha1.MaintenanceRecord{
 			{
-				StartedAt: metav1.Now(),
-				Status:    policyv1alpha1.MaintenanceStatusInProgress,
+				StartedAt:     metav1.Now(),
+				Status:        policyv1alpha1.MaintenanceStatusInProgress,
+				Phase:         policyv1alpha1.MaintenancePhasePatchApplied,
+				AppliedMemory: "20Gi",
 			},
 		}
 		Expect(k8sClient.Status().Update(ctx, policyLatest)).To(Succeed())
@@ -468,22 +503,24 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		result, err := reconcilePolicy(ctx, policy)
 
 		Expect(err).NotTo(HaveOccurred())
-		// monitorMaintenance should requeue in 30s while the window is still open.
+		// monitorMaintenance should requeue in 30s — cluster not yet healthy.
 		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
 		updated := getPolicy(ctx, policy)
 		// No additional history record should have been appended.
 		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
 		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusInProgress))
+		Expect(updated.Status.MaintenanceHistory[0].Phase).To(Equal(policyv1alpha1.MaintenancePhasePatchApplied))
 	})
 
-	// ── Scenario 8b: Maintenance timeout – window expired while in progress ───
+	// ── Scenario 8b: Maintenance timeout – window expired, cluster unhealthy ───
 
-	It("records a Failed maintenance run when the window expires while maintenance is in progress", func() {
+	It("records a Failed maintenance run when the window expires and cluster is unhealthy", func() {
 		vpaName := uniqueName("vpa")
 		pgName := uniqueName("pg")
 		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
-		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+		// Cluster is NOT Running — grace check should fail.
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Updating")
 
 		// cronNeverOpen (Jan 1st midnight) with timeout=1 min means the window closed
 		// hours/months ago from the perspective of the test.
@@ -504,8 +541,10 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		}
 		policyLatest.Status.MaintenanceHistory = []policyv1alpha1.MaintenanceRecord{
 			{
-				StartedAt: metav1.Now(),
-				Status:    policyv1alpha1.MaintenanceStatusInProgress,
+				StartedAt:     metav1.Now(),
+				Status:        policyv1alpha1.MaintenanceStatusInProgress,
+				Phase:         policyv1alpha1.MaintenancePhasePatchApplied,
+				AppliedMemory: "20Gi",
 			},
 		}
 		Expect(k8sClient.Status().Update(ctx, policyLatest)).To(Succeed())
@@ -524,6 +563,56 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		lastFailed := findConditionInSlice(updated.Status.Conditions, policyv1alpha1.ConditionLastMaintenanceFailed)
 		Expect(lastFailed).NotTo(BeNil())
 		Expect(lastFailed.Status).To(Equal(metav1.ConditionTrue))
+	})
+
+	// ── Scenario 8c: Window expired but cluster healthy (grace period) ────────
+
+	It("marks maintenance Completed via grace period when window expired but cluster is healthy", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
+		// Cluster is Running — grace check should succeed.
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronNeverOpen)
+		policy.Spec.MaintenanceWindow.TimeoutMinutes = 1
+		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
+
+		// Simulate maintenance stuck in PatchApplied with window expired.
+		policyLatest := getPolicy(ctx, policy)
+		policyLatest.Status.Conditions = []metav1.Condition{
+			{
+				Type:               policyv1alpha1.ConditionMaintenanceInProgress,
+				Status:             metav1.ConditionTrue,
+				Reason:             "MaintenanceStarted",
+				Message:            "in progress",
+				LastTransitionTime: metav1.Now(),
+			},
+		}
+		policyLatest.Status.MaintenanceHistory = []policyv1alpha1.MaintenanceRecord{
+			{
+				StartedAt:     metav1.Now(),
+				Status:        policyv1alpha1.MaintenanceStatusInProgress,
+				Phase:         policyv1alpha1.MaintenancePhasePatchApplied,
+				AppliedMemory: "20Gi",
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, policyLatest)).To(Succeed())
+
+		result, err := reconcilePolicy(ctx, policy)
+
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(5 * time.Minute))
+
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+		Expect(updated.Status.CurrentMemory).NotTo(BeNil())
+		Expect(updated.Status.CurrentMemory.String()).To(Equal("20Gi"))
+
+		lastFailed := findConditionInSlice(updated.Status.Conditions, policyv1alpha1.ConditionLastMaintenanceFailed)
+		Expect(lastFailed).NotTo(BeNil())
+		Expect(lastFailed.Status).To(Equal(metav1.ConditionFalse))
 	})
 
 	// ── Scenario 9: InitialMemory applied when Zalando CR has no resources ───
@@ -695,12 +784,16 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		// No initialMemory set — should proceed to normal maintenance flow.
 		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
 
+		// Reconcile 1: starts maintenance (Phase=PatchApplied).
 		result, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
 
+		// Reconcile 2: cluster Running, no post-actions → completes.
+		result, err = reconcilePolicy(ctx, policy)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
-		// Normal maintenance should have completed (currentMemory is nil → change gates pass → maintenance starts).
 		updated := getPolicy(ctx, policy)
 		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
 		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
@@ -725,7 +818,12 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		}
 		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
 
+		// Reconcile 1: patches resources + PG params, Phase=PatchApplied.
 		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Reconcile 2: cluster Running, no post-actions → completes.
+		_, err = reconcilePolicy(ctx, policy)
 		Expect(err).NotTo(HaveOccurred())
 
 		updated := getPolicy(ctx, policy)
@@ -802,7 +900,10 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		policy.Spec.MemoryBuffer = 20 // +20%
 		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
 
+		// Reconcile 1: patch applied. Reconcile 2: complete.
 		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconcilePolicy(ctx, policy)
 		Expect(err).NotTo(HaveOccurred())
 
 		updated := getPolicy(ctx, policy)
@@ -825,7 +926,10 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		policy.Spec.MemoryBuffer = 20 // 60Gi + 20% = 72Gi, but max = 64Gi
 		Expect(k8sClient.Update(ctx, policy)).To(Succeed())
 
+		// Reconcile 1: patch applied. Reconcile 2: complete.
 		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		_, err = reconcilePolicy(ctx, policy)
 		Expect(err).NotTo(HaveOccurred())
 
 		updated := getPolicy(ctx, policy)
@@ -837,7 +941,129 @@ var _ = Describe("PostgresMemoryPolicy Reconciler", func() {
 		Expect(updated.Status.CurrentMemory.String()).To(Equal("64Gi"))
 	})
 
-	// ── Scenario 14: InitialMemory with overcommit > 1 ──────────────────────
+	// ── Scenario 14: Single update per maintenance window ────────────────────
+
+	It("does not start a second maintenance when VPA changes after completion in the same window", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
+
+		// Reconcile 1: starts maintenance (Phase=PatchApplied).
+		_, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		// Reconcile 2: cluster Running, no post-actions → completes.
+		_, err = reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+
+		// Now change VPA recommendation significantly (still in window).
+		vpa := &vpav1.VerticalPodAutoscaler{}
+		Expect(k8sClient.Get(ctx, types.NamespacedName{Name: vpaName, Namespace: ns.Name}, vpa)).To(Succeed())
+		vpa.Status.Recommendation.ContainerRecommendations[0].Target[corev1.ResourceMemory] = resource.MustParse("40Gi")
+		Expect(k8sClient.Status().Update(ctx, vpa)).To(Succeed())
+
+		// Reconcile 3: should NOT start a new maintenance (one-per-window guard).
+		result, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+
+		updated = getPolicy(ctx, policy)
+		// Still only 1 maintenance record — no second run started.
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+		Expect(updated.Status.MaintenanceHistory[0].AppliedMemory).To(Equal("20Gi"))
+	})
+
+	// ── Scenario 15: No post-actions → skip PostActionsTriggered phase ───────
+
+	It("goes directly from PatchApplied to Completed when no post-actions are defined", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Running")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
+		// No post-actions (default).
+
+		// Reconcile 1: patches, Phase=PatchApplied.
+		result, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+		updated := getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory[0].Phase).To(Equal(policyv1alpha1.MaintenancePhasePatchApplied))
+
+		// Reconcile 2: cluster Running → directly Completed (no PostActionsTriggered phase).
+		_, err = reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated = getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+	})
+
+	// ── Scenario 16: Operator restart mid-maintenance ────────────────────────
+
+	It("resumes from PatchApplied phase after operator restart (simulated)", func() {
+		vpaName := uniqueName("vpa")
+		pgName := uniqueName("pg")
+		makeVPA(ctx, ns.Name, vpaName, "20Gi", 0)
+		// Cluster not yet Running.
+		makeZalandoCluster(ctx, ns.Name, pgName, "1Gi", "Updating")
+
+		policy := makePolicy(ctx, ns.Name, uniqueName("policy"), vpaName, pgName, cronAlwaysOpen)
+
+		// Simulate: previous reconcile patched and persisted Phase=PatchApplied.
+		policyLatest := getPolicy(ctx, policy)
+		policyLatest.Status.Conditions = []metav1.Condition{
+			{
+				Type:               policyv1alpha1.ConditionMaintenanceInProgress,
+				Status:             metav1.ConditionTrue,
+				Reason:             "MaintenanceStarted",
+				Message:            "maintenance run has started",
+				LastTransitionTime: metav1.Now(),
+			},
+		}
+		policyLatest.Status.MaintenanceHistory = []policyv1alpha1.MaintenanceRecord{
+			{
+				StartedAt:     metav1.Now(),
+				Status:        policyv1alpha1.MaintenanceStatusInProgress,
+				Phase:         policyv1alpha1.MaintenancePhasePatchApplied,
+				AppliedMemory: "20Gi",
+				PreviousMemory: "1Gi",
+			},
+		}
+		Expect(k8sClient.Status().Update(ctx, policyLatest)).To(Succeed())
+
+		// Reconcile after "restart": should resume from PatchApplied, not re-patch.
+		result, err := reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.RequeueAfter).To(Equal(30 * time.Second))
+
+		updated := getPolicy(ctx, policy)
+		// Still waiting — cluster not Running.
+		Expect(updated.Status.MaintenanceHistory).To(HaveLen(1))
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusInProgress))
+		Expect(updated.Status.MaintenanceHistory[0].Phase).To(Equal(policyv1alpha1.MaintenancePhasePatchApplied))
+
+		// Make cluster healthy.
+		setZalandoClusterStatus(ctx, ns.Name, pgName, "Running")
+
+		// Reconcile again: should advance to Completed (no post-actions).
+		_, err = reconcilePolicy(ctx, policy)
+		Expect(err).NotTo(HaveOccurred())
+
+		updated = getPolicy(ctx, policy)
+		Expect(updated.Status.MaintenanceHistory[0].Status).To(Equal(policyv1alpha1.MaintenanceStatusCompleted))
+	})
+
+	// ── Scenario 17: InitialMemory with overcommit > 1 ──────────────────────
 
 	It("applies initialMemory with overcommit factor for memory limits", func() {
 		vpaName := uniqueName("vpa")

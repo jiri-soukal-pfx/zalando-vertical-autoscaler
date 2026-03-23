@@ -39,6 +39,130 @@ func (e *PostActionExecutor) Execute(ctx context.Context, policy *policyv1alpha1
 	return nil
 }
 
+// TriggerPostActions applies post-action triggers (e.g., restart annotations)
+// without waiting for completion. Returns immediately.
+func (e *PostActionExecutor) TriggerPostActions(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy) error {
+	for _, action := range policy.Spec.PostActions {
+		if err := e.trigger(ctx, policy, action); err != nil {
+			return fmt.Errorf("triggering post-action %s on %s/%s: %w",
+				action.Action, action.Target.Kind, action.Target.Name, err)
+		}
+	}
+	return nil
+}
+
+// ArePostActionsComplete checks whether all post-action targets have finished
+// their rollout. Returns true only if ALL targets are ready.
+func (e *PostActionExecutor) ArePostActionsComplete(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy) (bool, error) {
+	for _, action := range policy.Spec.PostActions {
+		done, err := e.isComplete(ctx, policy, action)
+		if err != nil {
+			return false, err
+		}
+		if !done {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// trigger applies the post-action trigger without waiting for completion.
+func (e *PostActionExecutor) trigger(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, action policyv1alpha1.PostActionSpec) error {
+	switch action.Action {
+	case policyv1alpha1.PostActionRolloutRestart:
+		return e.triggerRolloutRestart(ctx, policy, action.Target)
+	default:
+		return fmt.Errorf("unknown post-action type %q", action.Action)
+	}
+}
+
+// isComplete checks if a single post-action target has finished its rollout.
+func (e *PostActionExecutor) isComplete(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, action policyv1alpha1.PostActionSpec) (bool, error) {
+	switch action.Action {
+	case policyv1alpha1.PostActionRolloutRestart:
+		return e.isRolloutComplete(ctx, policy, action.Target)
+	default:
+		return false, fmt.Errorf("unknown post-action type %q", action.Action)
+	}
+}
+
+// triggerRolloutRestart applies the restart annotation without waiting.
+func (e *PostActionExecutor) triggerRolloutRestart(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, target policyv1alpha1.ActionTargetRef) error {
+	namespace := target.Namespace
+	if namespace == "" {
+		namespace = policy.Namespace
+	}
+
+	restartedAt := time.Now().UTC().Format(time.RFC3339)
+	patch := fmt.Sprintf(
+		`{"spec":{"template":{"metadata":{"annotations":{%q:%q}}}}}`,
+		rolloutRestartAnnotation, restartedAt,
+	)
+
+	switch target.Kind {
+	case "Deployment":
+		obj := &appsv1.Deployment{}
+		if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: target.Name}, obj); err != nil {
+			return fmt.Errorf("getting Deployment %s/%s: %w", namespace, target.Name, err)
+		}
+		return e.client.Patch(ctx, obj, client.RawPatch(types.StrategicMergePatchType, []byte(patch)))
+	case "StatefulSet":
+		obj := &appsv1.StatefulSet{}
+		if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: target.Name}, obj); err != nil {
+			return fmt.Errorf("getting StatefulSet %s/%s: %w", namespace, target.Name, err)
+		}
+		return e.client.Patch(ctx, obj, client.RawPatch(types.StrategicMergePatchType, []byte(patch)))
+	case "DaemonSet":
+		obj := &appsv1.DaemonSet{}
+		if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: target.Name}, obj); err != nil {
+			return fmt.Errorf("getting DaemonSet %s/%s: %w", namespace, target.Name, err)
+		}
+		return e.client.Patch(ctx, obj, client.RawPatch(types.StrategicMergePatchType, []byte(patch)))
+	default:
+		return fmt.Errorf("unsupported target kind %q", target.Kind)
+	}
+}
+
+// isRolloutComplete checks if a single rollout restart target is ready.
+func (e *PostActionExecutor) isRolloutComplete(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, target policyv1alpha1.ActionTargetRef) (bool, error) {
+	namespace := target.Namespace
+	if namespace == "" {
+		namespace = policy.Namespace
+	}
+
+	switch target.Kind {
+	case "Deployment":
+		obj := &appsv1.Deployment{}
+		if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: target.Name}, obj); err != nil {
+			return false, fmt.Errorf("getting Deployment %s/%s: %w", namespace, target.Name, err)
+		}
+		desired := int32(1)
+		if obj.Spec.Replicas != nil {
+			desired = *obj.Spec.Replicas
+		}
+		return obj.Status.UpdatedReplicas == desired && obj.Status.AvailableReplicas == desired, nil
+	case "StatefulSet":
+		obj := &appsv1.StatefulSet{}
+		if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: target.Name}, obj); err != nil {
+			return false, fmt.Errorf("getting StatefulSet %s/%s: %w", namespace, target.Name, err)
+		}
+		desired := int32(1)
+		if obj.Spec.Replicas != nil {
+			desired = *obj.Spec.Replicas
+		}
+		return obj.Status.UpdatedReplicas == desired && obj.Status.ReadyReplicas == desired, nil
+	case "DaemonSet":
+		obj := &appsv1.DaemonSet{}
+		if err := e.client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: target.Name}, obj); err != nil {
+			return false, fmt.Errorf("getting DaemonSet %s/%s: %w", namespace, target.Name, err)
+		}
+		desired := obj.Status.DesiredNumberScheduled
+		return obj.Status.UpdatedNumberScheduled == desired && obj.Status.NumberReady == desired, nil
+	default:
+		return false, fmt.Errorf("unsupported target kind %q", target.Kind)
+	}
+}
+
 // dispatch selects the handler for the given action type.
 func (e *PostActionExecutor) dispatch(ctx context.Context, policy *policyv1alpha1.PostgresMemoryPolicy, action policyv1alpha1.PostActionSpec) error {
 	switch action.Action {

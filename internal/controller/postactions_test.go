@@ -7,6 +7,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	policyv1alpha1 "github.com/pricefx/zalando-vertical-autoscaler/api/v1alpha1"
@@ -106,5 +107,145 @@ func TestNamespaceOverride(t *testing.T) {
 	}
 	if namespace != "staging" {
 		t.Errorf("namespace = %s, want staging", namespace)
+	}
+}
+
+func TestTriggerPostActions_AppliesAnnotation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+
+	replicas := int32(1)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-app", Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(dep).Build()
+	executor := NewPostActionExecutor(c)
+
+	policy := &policyv1alpha1.PostgresMemoryPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-policy", Namespace: "default"},
+		Spec: policyv1alpha1.PostgresMemoryPolicySpec{
+			PostActions: []policyv1alpha1.PostActionSpec{
+				{
+					Action: policyv1alpha1.PostActionRolloutRestart,
+					Target: policyv1alpha1.ActionTargetRef{Kind: "Deployment", Name: "my-app"},
+				},
+			},
+		},
+	}
+
+	err := executor.TriggerPostActions(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify annotation was applied.
+	updated := &appsv1.Deployment{}
+	if err := c.Get(context.Background(), client.ObjectKeyFromObject(dep), updated); err != nil {
+		t.Fatalf("failed to get updated deployment: %v", err)
+	}
+	if _, ok := updated.Spec.Template.Annotations[rolloutRestartAnnotation]; !ok {
+		t.Fatal("expected restart annotation to be set")
+	}
+}
+
+func TestArePostActionsComplete_ReturnsFalseWhenNotReady(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+
+	replicas := int32(3)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-app", Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+		},
+		Status: appsv1.DeploymentStatus{
+			UpdatedReplicas:   1, // not all updated yet
+			AvailableReplicas: 1,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(dep).WithStatusSubresource(dep).Build()
+	executor := NewPostActionExecutor(c)
+
+	policy := &policyv1alpha1.PostgresMemoryPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-policy", Namespace: "default"},
+		Spec: policyv1alpha1.PostgresMemoryPolicySpec{
+			PostActions: []policyv1alpha1.PostActionSpec{
+				{
+					Action: policyv1alpha1.PostActionRolloutRestart,
+					Target: policyv1alpha1.ActionTargetRef{Kind: "Deployment", Name: "my-app"},
+				},
+			},
+		},
+	}
+
+	done, err := executor.ArePostActionsComplete(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if done {
+		t.Fatal("expected false when rollout is not complete")
+	}
+}
+
+func TestArePostActionsComplete_ReturnsTrueWhenReady(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = appsv1.AddToScheme(scheme)
+
+	replicas := int32(2)
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "my-app", Namespace: "default"},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "test"}},
+		},
+		Status: appsv1.DeploymentStatus{
+			UpdatedReplicas:   2,
+			AvailableReplicas: 2,
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(dep).WithStatusSubresource(dep).Build()
+	executor := NewPostActionExecutor(c)
+
+	policy := &policyv1alpha1.PostgresMemoryPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-policy", Namespace: "default"},
+		Spec: policyv1alpha1.PostgresMemoryPolicySpec{
+			PostActions: []policyv1alpha1.PostActionSpec{
+				{
+					Action: policyv1alpha1.PostActionRolloutRestart,
+					Target: policyv1alpha1.ActionTargetRef{Kind: "Deployment", Name: "my-app"},
+				},
+			},
+		},
+	}
+
+	done, err := executor.ArePostActionsComplete(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected true when rollout is complete")
+	}
+}
+
+func TestArePostActionsComplete_ReturnsTrueWhenNoPostActions(t *testing.T) {
+	scheme := runtime.NewScheme()
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	executor := NewPostActionExecutor(c)
+
+	policy := &policyv1alpha1.PostgresMemoryPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-policy", Namespace: "default"},
+	}
+
+	done, err := executor.ArePostActionsComplete(context.Background(), policy)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !done {
+		t.Fatal("expected true when no post-actions defined")
 	}
 }

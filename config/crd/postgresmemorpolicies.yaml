@@ -282,6 +282,13 @@ spec:
                       description: PreviousMemory is the memory value before this
                         maintenance run.
                       type: string
+                    phase:
+                      description: Phase tracks the current step within an InProgress
+                        maintenance run.
+                      type: string
+                      enum:
+                      - PatchApplied
+                      - PostActionsTriggered
                     reason:
                       description: Reason provides a human-readable explanation for
                         the status.

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -82,4 +83,86 @@ func TestFindInProgressRecord(t *testing.T) {
 	if rec.CompletedAt == nil {
 		t.Fatal("expected CompletedAt to be set")
 	}
+}
+
+func TestHasCompletedMaintenanceInWindow(t *testing.T) {
+	windowStart := time.Date(2026, 3, 23, 2, 0, 0, 0, time.UTC)
+	windowEnd := time.Date(2026, 3, 23, 3, 0, 0, 0, time.UTC)
+
+	t.Run("completed record within window returns true", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowStart.Add(10 * time.Minute)),
+			Status:    policyv1alpha1.MaintenanceStatusCompleted,
+		})
+		if !hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected true for completed record within window")
+		}
+	})
+
+	t.Run("completed record outside window returns false", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowStart.Add(-1 * time.Hour)),
+			Status:    policyv1alpha1.MaintenanceStatusCompleted,
+		})
+		if hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected false for completed record outside window")
+		}
+	})
+
+	t.Run("no completed records returns false", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		if hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected false for empty history")
+		}
+	})
+
+	t.Run("multiple records one completed in window returns true", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowStart.Add(-2 * time.Hour)),
+			Status:    policyv1alpha1.MaintenanceStatusFailed,
+		})
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowStart.Add(5 * time.Minute)),
+			Status:    policyv1alpha1.MaintenanceStatusCompleted,
+		})
+		if !hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected true when one completed record is in window")
+		}
+	})
+
+	t.Run("failed record in window does not count", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowStart.Add(10 * time.Minute)),
+			Status:    policyv1alpha1.MaintenanceStatusFailed,
+		})
+		if hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected false for failed record in window")
+		}
+	})
+
+	t.Run("completed record at exact window start is included", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowStart),
+			Status:    policyv1alpha1.MaintenanceStatusCompleted,
+		})
+		if !hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected true for completed record at exact window start")
+		}
+	})
+
+	t.Run("completed record at exact window end is excluded", func(t *testing.T) {
+		policy := &policyv1alpha1.PostgresMemoryPolicy{}
+		addMaintenanceRecord(policy, policyv1alpha1.MaintenanceRecord{
+			StartedAt: metav1.NewTime(windowEnd),
+			Status:    policyv1alpha1.MaintenanceStatusCompleted,
+		})
+		if hasCompletedMaintenanceInWindow(policy, windowStart, windowEnd) {
+			t.Fatal("expected false for completed record at exact window end")
+		}
+	})
 }
