@@ -360,7 +360,10 @@ func (r *PostgresMemoryPolicyReconciler) handleWindowExpired(
 
 		if postActionsDone {
 			logger.Info("maintenance completed after window expired (grace period)")
-			memTarget := resource.MustParse(record.AppliedMemory)
+			memTarget, err := resource.ParseQuantity(record.AppliedMemory)
+			if err != nil {
+				return r.failMaintenance(ctx, policy, fmt.Sprintf("parsing applied memory %q: %v", record.AppliedMemory, err))
+			}
 			policy.Status.CurrentMemory = &memTarget
 			markRecordCompleted(policy, policyv1alpha1.MaintenanceStatusCompleted, "completed after window expired")
 			SetCondition(policy, policyv1alpha1.ConditionMaintenanceInProgress,
@@ -388,7 +391,10 @@ func (r *PostgresMemoryPolicyReconciler) completeMaintenance(
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	memTarget := resource.MustParse(record.AppliedMemory)
+	memTarget, err := resource.ParseQuantity(record.AppliedMemory)
+	if err != nil {
+		return r.failMaintenance(ctx, policy, fmt.Sprintf("parsing applied memory %q: %v", record.AppliedMemory, err))
+	}
 	policy.Status.CurrentMemory = &memTarget
 	markRecordCompleted(policy, policyv1alpha1.MaintenanceStatusCompleted, "")
 	SetCondition(policy, policyv1alpha1.ConditionMaintenanceInProgress,
